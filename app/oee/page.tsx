@@ -402,6 +402,7 @@ export default function OEEPage() {
   const theme = useTheme();
   const sim = useSimulatorStore();
 
+
   // Avoid hydration mismatch: do not use Date.now()/new Date() during SSR render.
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
@@ -449,27 +450,61 @@ export default function OEEPage() {
   const [oeeLoading, setOeeLoading] = React.useState(false);
   const [oeeApiData, setOeeApiData] = React.useState<OEERecord[]>([]);
   const [oeeHistorical, setOeeHistorical] = React.useState<OEERecord[]>([]);
+  const [oeeApiFallback, setOeeApiFallback] = React.useState<OEERecord[]>([]); // Fallback for today when WebSocket fails
+  const [usingApiFallback, setUsingApiFallback] = React.useState(false);
 
   // Stops data
   const [stopsLoading, setStopsLoading] = React.useState(false);
   const [stops, setStops] = React.useState<Stop[]>([]);
 
-  // Fetch OEE from API when not today
+  // Check if WebSocket OEE data is valid for today
+  const hasValidWebSocketOee = React.useMemo(() => {
+    if (!isToday || !sim.oee) return false;
+    const oeeData = sim.oee.data;
+    return Array.isArray(oeeData) && oeeData.length > 0;
+  }, [isToday, sim.oee]);
+
+  // Fetch OEE from API - for historical dates OR as fallback for today when WebSocket fails
   React.useEffect(() => {
-    if (!filterDate || isToday) {
-      // If we aren't going to fetch (empty date or realtime), ensure we don't
-      // keep a spinner running from a cancelled in-flight request.
+    if (!filterDate) {
       setOeeLoading(false);
       return;
     }
+
+    // For today: only fetch from API if WebSocket data is not available
+    if (isToday && hasValidWebSocketOee) {
+      // WebSocket is working, clear fallback and don't fetch from API
+      setOeeApiFallback([]);
+      setUsingApiFallback(false);
+      setOeeLoading(false);
+      return;
+    }
+
     let cancelled = false;
     (async () => {
       setOeeLoading(true);
       try {
         const res = await http.get('/oee', { params: { date: filterDate } });
-        if (!cancelled) setOeeApiData(asArray<OEERecord>(res.data));
+        if (!cancelled) {
+          const data = asArray<OEERecord>(res.data);
+          if (isToday) {
+            // Today but WebSocket not available - use API as fallback
+            setOeeApiFallback(data);
+            setUsingApiFallback(true);
+          } else {
+            // Historical date
+            setOeeApiData(data);
+            setUsingApiFallback(false);
+          }
+        }
       } catch {
-        if (!cancelled) setOeeApiData([]);
+        if (!cancelled) {
+          if (isToday) {
+            setOeeApiFallback([]);
+          } else {
+            setOeeApiData([]);
+          }
+        }
       } finally {
         if (!cancelled) setOeeLoading(false);
       }
@@ -478,7 +513,20 @@ export default function OEEPage() {
       cancelled = true;
       setOeeLoading(false);
     };
-  }, [filterDate, isToday]);
+  }, [filterDate, isToday, hasValidWebSocketOee]);
+
+  // Retry WebSocket connection periodically when using API fallback for today
+  React.useEffect(() => {
+    if (!isToday || hasValidWebSocketOee) return;
+
+    // Attempt to reconnect to WebSocket every 5 seconds
+    const retryInterval = setInterval(() => {
+      getSocket();
+      subscribeTo('oee');
+    }, 5000);
+
+    return () => clearInterval(retryInterval);
+  }, [isToday, hasValidWebSocketOee]);
 
   // Fetch last 7 days OEE
   React.useEffect(() => {
@@ -533,21 +581,37 @@ export default function OEEPage() {
 
   // OEE value to display
   const currentOee = React.useMemo(() => {
-    if (isToday && sim.oee) {
-      const oeeData = sim.oee.data;
-      if (Array.isArray(oeeData)) {
-        const filtered = oeeData.filter((r: OEERecord) => {
+    // For today: prefer WebSocket data, fallback to API
+    if (isToday) {
+      // Try WebSocket data first
+      if (hasValidWebSocketOee && sim.oee) {
+        const oeeData = sim.oee.data;
+        if (Array.isArray(oeeData)) {
+          const filtered = oeeData.filter((r: OEERecord) => {
+            if (filterShop && r.shop !== filterShop) return false;
+            if (filterLine && r.line !== filterLine) return false;
+            return true;
+          });
+          if (filtered.length > 0) {
+            const avg = filtered.reduce((sum: number, r: OEERecord) => sum + (r.oee ?? 0), 0) / filtered.length;
+            return avg;
+          }
+        }
+      }
+      // Fallback to API data for today
+      if (oeeApiFallback.length > 0) {
+        const filtered = oeeApiFallback.filter((r) => {
           if (filterShop && r.shop !== filterShop) return false;
           if (filterLine && r.line !== filterLine) return false;
           return true;
         });
         if (filtered.length > 0) {
-          const avg = filtered.reduce((sum: number, r: OEERecord) => sum + (r.oee ?? 0), 0) / filtered.length;
-          return avg;
+          return filtered.reduce((sum, r) => sum + (r.oee ?? 0), 0) / filtered.length;
         }
       }
+      return 0;
     }
-    // Fallback to API data
+    // Historical: use API data
     const filtered = oeeApiData.filter((r) => {
       if (filterShop && r.shop !== filterShop) return false;
       if (filterLine && r.line !== filterLine) return false;
@@ -557,24 +621,41 @@ export default function OEEPage() {
       return filtered.reduce((sum, r) => sum + (r.oee ?? 0), 0) / filtered.length;
     }
     return 0;
-  }, [isToday, sim.oee, oeeApiData, filterShop, filterLine]);
+  }, [isToday, hasValidWebSocketOee, sim.oee, oeeApiData, oeeApiFallback, filterShop, filterLine]);
 
   // Diff time (minutes): production_time - takt_time * cars_production
   const difftime = React.useMemo(() => {
-    if (isToday && sim.oee) {
-      const oeeData = sim.oee.data;
-      if (Array.isArray(oeeData)) {
-        const filtered = oeeData.filter((r: OEERecord) => {
+    // For today: prefer WebSocket, fallback to API
+    if (isToday) {
+      // Try WebSocket data first
+      if (hasValidWebSocketOee && sim.oee) {
+        const oeeData = sim.oee.data;
+        if (Array.isArray(oeeData)) {
+          const filtered = oeeData.filter((r: OEERecord) => {
+            if (filterShop && r.shop !== filterShop) return false;
+            if (filterLine && r.line !== filterLine) return false;
+            return true;
+          });
+          if (filtered.length > 0) {
+            return filtered.reduce((sum: number, r: OEERecord) => sum + getDiffTimeMinutes(r), 0) / filtered.length;
+          }
+        }
+      }
+      // Fallback to API data for today
+      if (oeeApiFallback.length > 0) {
+        const filtered = oeeApiFallback.filter((r) => {
           if (filterShop && r.shop !== filterShop) return false;
           if (filterLine && r.line !== filterLine) return false;
           return true;
         });
         if (filtered.length > 0) {
-          return filtered.reduce((sum: number, r: OEERecord) => sum + getDiffTimeMinutes(r), 0) / filtered.length;
+          return filtered.reduce((sum, r) => sum + getDiffTimeMinutes(r), 0) / filtered.length;
         }
       }
+      return 0;
     }
 
+    // Historical: use API data
     const filtered = oeeApiData.filter((r) => {
       if (filterShop && r.shop !== filterShop) return false;
       if (filterLine && r.line !== filterLine) return false;
@@ -584,7 +665,7 @@ export default function OEEPage() {
       return filtered.reduce((sum, r) => sum + getDiffTimeMinutes(r), 0) / filtered.length;
     }
     return 0;
-  }, [isToday, sim.oee, oeeApiData, filterShop, filterLine]);
+  }, [isToday, hasValidWebSocketOee, sim.oee, oeeApiData, oeeApiFallback, filterShop, filterLine]);
 
   // JPH (Jobs per Hour) Real = carsProduction / elapsedHours
   // elapsedHours = (simulatorTimestamp - 07:00 of same day) in hours
@@ -612,10 +693,17 @@ export default function OEEPage() {
 
     if (elapsedHours <= 0) return 0;
 
-    // 2) Fonte de dados: realtime via socket; histórico via API
-    const source = isToday
-      ? (Array.isArray(sim.oee?.data) ? (sim.oee!.data as OEERecord[]) : [])
-      : oeeApiData;
+    // 2) Fonte de dados: prefer WebSocket for today, fallback to API
+    let source: OEERecord[] = [];
+    if (isToday) {
+      if (hasValidWebSocketOee && Array.isArray(sim.oee?.data)) {
+        source = sim.oee!.data as OEERecord[];
+      } else if (oeeApiFallback.length > 0) {
+        source = oeeApiFallback;
+      }
+    } else {
+      source = oeeApiData;
+    }
 
     // 3) Filtrar por shop/line
     const filtered = source.filter((r: OEERecord) => {
@@ -647,7 +735,7 @@ export default function OEEPage() {
 
 
     return carsValue / elapsedHours;
-  }, [filterDate, isToday, simNowMs, sim.oee, oeeApiData, filterShop, filterLine, plant.shops]);
+  }, [filterDate, isToday, simNowMs, hasValidWebSocketOee, sim.oee, oeeApiData, oeeApiFallback, filterShop, filterLine, plant.shops]);
 
   // Last 7 days bar data
   const last7Days = React.useMemo(() => {
@@ -800,9 +888,19 @@ export default function OEEPage() {
               OEE
             </Typography>
             {/* Regra 3: Feedback - Status de tempo real */}
-            {isToday && (
-              <Tooltip title="Dados em tempo real" arrow>
+            {isToday && hasValidWebSocketOee && (
+              <Tooltip title="Dados em tempo real via WebSocket" arrow>
                 <Chip label="Tempo Real" color="success" size="small" variant="outlined" />
+              </Tooltip>
+            )}
+            {isToday && !hasValidWebSocketOee && usingApiFallback && (
+              <Tooltip title="WebSocket indisponível. Usando dados da API. Tentando reconectar..." arrow>
+                <Chip label="API (Reconectando...)" color="warning" size="small" variant="outlined" />
+              </Tooltip>
+            )}
+            {isToday && !hasValidWebSocketOee && !usingApiFallback && (
+              <Tooltip title="Aguardando conexão WebSocket..." arrow>
+                <Chip label="Conectando..." color="default" size="small" variant="outlined" />
               </Tooltip>
             )}
             {!isToday && filterDate && (
@@ -868,9 +966,14 @@ export default function OEEPage() {
               </Select>
             </FormControl>
 
-            {isToday && (
+            {isToday && hasValidWebSocketOee && (
               <Typography variant="caption" color="success.main" sx={{ fontWeight: 600 }}>
                 ● Tempo real
+              </Typography>
+            )}
+            {isToday && !hasValidWebSocketOee && usingApiFallback && (
+              <Typography variant="caption" color="warning.main" sx={{ fontWeight: 600 }}>
+                ⟳ Reconectando...
               </Typography>
             )}
           </Stack>
