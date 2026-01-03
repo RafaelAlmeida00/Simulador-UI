@@ -55,12 +55,15 @@ function createSocket(): Socket {
     simulatorStore.setBuffers(payload);
   });
   s.on('health', (payload) => {
+     console.log(payload);
     simulatorStore.setHealth(payload);
   });
   s.on('cars', (payload) => {
     simulatorStore.setCars(payload);
   });
    s.on('oee', (payload) => {    
+    console.log(payload);
+    
     simulatorStore.setOEE(payload);
   });
   return s;

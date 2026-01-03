@@ -120,6 +120,13 @@ function countDistinctLines(records: OEERecord[]): number {
 // Hours from 07:00 to 00:00 (next day)
 const HOURS = Array.from({ length: 18 }, (_, i) => (7 + i) % 24);
 
+// Simulator timezone offset (UTC-3 for Brazil)
+// Production starts at 7:00 AM in simulator timezone
+// 7:00 AM at UTC-3 = 10:00 AM UTC
+const SIMULATOR_UTC_OFFSET_HOURS = -3;
+const PRODUCTION_START_HOUR_LOCAL = 7;
+const PRODUCTION_START_HOUR_UTC = PRODUCTION_START_HOUR_LOCAL - SIMULATOR_UTC_OFFSET_HOURS; // 10
+
 function hourLabel(h: number): string {
   return `${String(h).padStart(2, '0')}:00`;
 }
@@ -273,9 +280,9 @@ function HourTimeline({ slots, height = 140 }: { slots: HourSlot[]; height?: num
               transition: 'transform 0.15s, box-shadow 0.15s',
               '&:hover': showTooltip
                 ? {
-                    transform: 'scaleY(1.05)',
-                    boxShadow: 4,
-                  }
+                  transform: 'scaleY(1.05)',
+                  boxShadow: 4,
+                }
                 : {},
             }}
           />
@@ -578,26 +585,28 @@ export default function OEEPage() {
 
   // JPH (Jobs per Hour) Real = carsProduction / elapsedHours
   // elapsedHours = (simulatorTimestamp - 07:00 of same day) in hours
+  // Uses UTC methods to avoid timezone inconsistencies across different servers
   const jphReal = React.useMemo(() => {
     if (!filterDate) return 0;
 
-    // 1) Tempo decorrido
+    // 1) Tempo decorrido (usando UTC para consistência)
     let elapsedHours = 0;
     if (isToday) {
       if (!simNowMs) return 0;
       const start = new Date(simNowMs);
-      start.setHours(7, 0, 0, 0);
+
+      // Set to 7:00 AM in simulator timezone (UTC-3) = 10:00 AM UTC
+      start.setUTCHours(PRODUCTION_START_HOUR_LOCAL, 0, 0, 0);
       const elapsedMs = simNowMs - start.getTime();
       elapsedHours = elapsedMs > 0 ? elapsedMs / 3600000 : 0;
       // clamp to the 07:00 -> 00:00 window
+      console.log(simNowMs, start.getTime());
+      console.log(elapsedMs, elapsedHours);
+
       if (elapsedHours > 17) elapsedHours = 17;
     } else {
-      // Historical: assume the full window (07:00 -> 00:00 next day)
-      const start = new Date(filterDate + 'T07:00:00');
-      const end = new Date(filterDate + 'T00:00:00');
-      end.setDate(end.getDate() + 1);
-      const elapsedMs = end.getTime() - start.getTime();
-      elapsedHours = elapsedMs > 0 ? elapsedMs / 3600000 : 0;
+      // Historical: full production window is always 17 hours (07:00 -> 00:00)
+      elapsedHours = 17;
     }
 
     if (elapsedHours <= 0) return 0;
@@ -634,6 +643,7 @@ export default function OEEPage() {
       if (!lineCount) lineCount = countDistinctLines(filtered);
       if (lineCount > 0) carsValue = totalCars / lineCount;
     }
+
 
     return carsValue / elapsedHours;
   }, [filterDate, isToday, simNowMs, sim.oee, oeeApiData, filterShop, filterLine, plant.shops]);
@@ -814,15 +824,15 @@ export default function OEEPage() {
                 {/* Generate last 365 days */}
                 {(simNowMs
                   ? Array.from({ length: 365 }, (_, i) => {
-                      const d = new Date(simNowMs);
-                      d.setDate(d.getDate() - i);
-                      const val = todayStr(d.getTime());
-                      return (
-                        <MenuItem key={val} value={val}>
-                          {val}
-                        </MenuItem>
-                      );
-                    })
+                    const d = new Date(simNowMs);
+                    d.setDate(d.getDate() - i);
+                    const val = todayStr(d.getTime());
+                    return (
+                      <MenuItem key={val} value={val}>
+                        {val}
+                      </MenuItem>
+                    );
+                  })
                   : [])}
               </Select>
             </FormControl>
@@ -888,7 +898,7 @@ export default function OEEPage() {
               </Box>
             </Box>
           </Paper>
-          
+
 
           {/* Row 2: Hour Timeline */}
           <Paper sx={{ p: 2 }}>
