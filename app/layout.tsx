@@ -23,11 +23,24 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const runtimeEnv = {
+    apiBaseUrl: process.env.NEXT_PUBLIC_API_BASE_URL ?? "",
+    socketUrl: process.env.NEXT_PUBLIC_SOCKET_URL ?? "",
+  };
+
+  // Avoid `</script>` termination issues by escaping '<'
+  const runtimeEnvJson = JSON.stringify(runtimeEnv).replace(/</g, "\\u003c");
+
   return (
     <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.__RUNTIME_ENV__=${runtimeEnvJson};`,
+          }}
+        />
         <AppRouterCacheProvider>
           <ColorModeProvider>{children}</ColorModeProvider>
         </AppRouterCacheProvider>

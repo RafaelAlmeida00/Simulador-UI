@@ -1,6 +1,7 @@
 // util/socket.ts (exemplo)
 import { io, Socket } from 'socket.io-client';
 import { simulatorStore } from '../stores/simulatorStore';
+import { getRuntimeEnv } from './runtimeEnv';
 
 let socket: Socket | null = null;
 
@@ -18,7 +19,8 @@ export type CommandPayload = {
 };
 
 function createSocket(): Socket {
-  const s = io(process.env.NEXT_PUBLIC_SOCKET_URL, {
+  const { socketUrl } = getRuntimeEnv();
+  const s = io(socketUrl || undefined, {
     transports: ['websocket'],
     path: '/socket.io' // opcional se você usa padrão
   });
