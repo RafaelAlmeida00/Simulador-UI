@@ -57,7 +57,9 @@ export default function HealthSimulatorPage() {
   const isHealthy = React.useMemo(() => {
     if (!data || typeof data !== 'object') return false;
     const d = data as Record<string, unknown>;
-    return d.status === 'ok' || d.status === 'healthy' || d.healthy === true;
+    if (!d.data || typeof d.data !== 'object') return false;
+    const innerData = d.data as Record<string, unknown>;
+    return innerData.status === 'healthy';
   }, [data]);
 
   return (
