@@ -8,6 +8,7 @@ export type HealthData = {
   serverStatus?: 'healthy' | 'unhealthy' | string;
   simulatorStatus?: 'running' | 'stopped' | 'paused' | string;
   timestamp?: number;
+  simulator?: any;
   simulatorTimestamp?: number;
   simulatorTimeString?: string;
   uptime?: number;

@@ -26,6 +26,10 @@ RUN npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 
+# Set timezone to Brazil (UTC-3)
+ENV TZ=America/Sao_Paulo
+RUN apk add --no-cache tzdata
+
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 

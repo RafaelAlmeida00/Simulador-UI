@@ -127,6 +127,9 @@ const SIMULATOR_UTC_OFFSET_HOURS = -3;
 const PRODUCTION_START_HOUR_LOCAL = 7;
 const PRODUCTION_START_HOUR_UTC = PRODUCTION_START_HOUR_LOCAL - SIMULATOR_UTC_OFFSET_HOURS; // 10
 
+// Stops timestamps come in UTC+0, need to add offset to convert to simulator timezone
+const STOPS_UTC_OFFSET_MS = 3 * 3600000; // +3 hours in milliseconds
+
 function hourLabel(h: number): string {
   return `${String(h).padStart(2, '0')}:00`;
 }
@@ -600,8 +603,6 @@ export default function OEEPage() {
       const elapsedMs = simNowMs - start.getTime();
       elapsedHours = elapsedMs > 0 ? elapsedMs / 3600000 : 0;
       // clamp to the 07:00 -> 00:00 window
-      console.log(simNowMs, start.getTime());
-      console.log(elapsedMs, elapsedHours);
 
       if (elapsedHours > 17) elapsedHours = 17;
     } else {
@@ -686,16 +687,17 @@ export default function OEEPage() {
       const hourEnd = hourStart + 3600000;
 
       const overlapping = filteredByShopLine.filter((s) => {
-        const st = getStartTime(s);
-        const et = getEndTime(s) || st + 60000; // default 1 min if no end
+        // Add offset to convert stop timestamps from UTC+0 to simulator timezone
+        const st = getStartTime(s) + STOPS_UTC_OFFSET_MS;
+        const et = (getEndTime(s) || getStartTime(s) + 60000) + STOPS_UTC_OFFSET_MS; // default 1 min if no end
         return st < hourEnd && et > hourStart;
       });
 
       // Calculate stopped minutes within this hour
       let stoppedMs = 0;
       for (const s of overlapping) {
-        const st = Math.max(getStartTime(s), hourStart);
-        const et = Math.min(getEndTime(s) || getStartTime(s) + 60000, hourEnd);
+        const st = Math.max(getStartTime(s) + STOPS_UTC_OFFSET_MS, hourStart);
+        const et = Math.min((getEndTime(s) || getStartTime(s) + 60000) + STOPS_UTC_OFFSET_MS, hourEnd);
         stoppedMs += Math.max(0, et - st);
       }
       const stoppedMinutes = Math.round(stoppedMs / 60000);
@@ -735,8 +737,9 @@ export default function OEEPage() {
       const minuteEnd = minuteStart + 60000;
 
       const overlapping = filteredByShopLine.filter((s) => {
-        const st = getStartTime(s);
-        const et = getEndTime(s) || st + 60000;
+        // Add offset to convert stop timestamps from UTC+0 to simulator timezone
+        const st = getStartTime(s) + STOPS_UTC_OFFSET_MS;
+        const et = (getEndTime(s) || getStartTime(s) + 60000) + STOPS_UTC_OFFSET_MS;
         return st < minuteEnd && et > minuteStart;
       });
 
