@@ -29,6 +29,12 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# (Opcional) Mantém as envs no runtime da imagem como fallback
+ARG NEXT_PUBLIC_API_BASE_URL
+ARG NEXT_PUBLIC_SOCKET_URL
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_SOCKET_URL=$NEXT_PUBLIC_SOCKET_URL
+
 # Cria usuário não-root
 RUN addgroup -S nextjs ; adduser -S nextjs -G nextjs
 
