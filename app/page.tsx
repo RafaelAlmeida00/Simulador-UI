@@ -447,7 +447,7 @@ export default function HomePage() {
                       : null;
 
                   const elapsedSec = enterMs && nowSimMs ? Math.max(0, Math.floor((nowSimMs - enterMs) / 1000)) : 0;
-
+                  const [shopName, lineName, stName] = st.name.split('-');
                   return (
                     <Paper
                       key={st.id}
@@ -456,13 +456,13 @@ export default function HomePage() {
                         const stationKey = {
                           shop: currentShopName,
                           line: currentLine?.name,
-                          station: st.name,
+                          station: stName,
                           startTime: st.startStop ?? null,
                         };
                         const matchedStop = isStopped ? stopForStationByStartTime(sim.stops, stationKey) ?? undefined : undefined;
                         setSelection({
                           kind: 'station',
-                          title: `Station ${st.name}`,
+                          title: `Station ${stName}`,
                           data: st.raw,
                           stationKey,
                           isStopped,
@@ -472,7 +472,7 @@ export default function HomePage() {
                       role="button"
                       tabIndex={0}
                       sx={{
-                        width: 220,
+                        width: 300,
                         minHeight: 140,
                         p: 1.25,
                         cursor: 'pointer',
@@ -485,7 +485,7 @@ export default function HomePage() {
                     >
                       <Box>
                         <Typography variant="subtitle2" sx={{ fontWeight: 800, color: theme.palette.textStation }} noWrap>
-                          {st.name} - {formatTakt(st.taktSg)}
+                          {stName} - {formatTakt(st.taktSg)}
                         </Typography>
                         <Box sx={{ mt: 0.5 }}>
                           <Typography variant="caption" sx={{ display: 'block', fontWeight: 800, color: theme.palette.textStation }}>

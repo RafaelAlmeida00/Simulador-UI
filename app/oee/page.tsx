@@ -401,7 +401,8 @@ function MinuteTimeline({ slots, height = 80 }: { slots: MinuteSlot[]; height?: 
 export default function OEEPage() {
   const theme = useTheme();
   const sim = useSimulatorStore();
-
+  console.log(sim);
+  
 
   // Avoid hydration mismatch: do not use Date.now()/new Date() during SSR render.
   const [mounted, setMounted] = React.useState(false);
