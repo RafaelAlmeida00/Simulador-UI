@@ -39,30 +39,44 @@ function createSocket(): Socket {
 
   // Escutar os nomes que o servidor realmente emite
   s.on('plantstate', (payload) => {
+    console.log(payload);
+
     simulatorStore.setPlantState(payload);
   });
   s.on('events', (payload) => {
+    console.log(payload);
+
     simulatorStore.setEvents(payload);
   });
   // alias legacy (websocketdata.yaml: emits também 'car_event')
   s.on('car_event', (payload) => {
+    console.log(payload);
+
     simulatorStore.setEvents(payload);
   });
   s.on('stops', (payload) => {
+    console.log(payload);
+
     simulatorStore.setStops(payload);
   });
   s.on('buffers', (payload) => {
+    console.log(payload);
+
     simulatorStore.setBuffers(payload);
   });
   s.on('health', (payload) => {
+    console.log(payload);
+
     simulatorStore.setHealth(payload);
   });
   s.on('cars', (payload) => {
+    console.log(payload);
+
     simulatorStore.setCars(payload);
   });
-   s.on('oee', (payload) => {       
+  s.on('oee', (payload) => {
     console.log(payload);
-     
+
     simulatorStore.setOEE(payload);
   });
   return s;

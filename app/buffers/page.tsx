@@ -25,6 +25,7 @@ import { getSocket, subscribeTo } from '../src/utils/socket';
 import { useSimulatorStore } from '../src/hooks/useSimulatorStore';
 import { carsById } from '../src/stores/simulatorStore';
 import type { BufferItem } from '../src/stores/simulatorStore';
+import { normalizePlantSnapshot } from '../src/utils/plantNormalize';
 
 type DetailSelection =
   | { kind: 'buffer'; title: string; data: unknown }
@@ -134,7 +135,41 @@ export default function BuffersPage() {
 
   const [selection, setSelection] = React.useState<DetailSelection | null>(null);
 
+  // Socket cars (CARS_STATE) - fonte primária
   const carsMap = React.useMemo(() => carsById(sim.cars), [sim.cars]);
+
+  // Plant snapshot para fallback - busca currentCar das estações
+  const plant = React.useMemo(() => normalizePlantSnapshot(sim.plantState), [sim.plantState]);
+
+  // Busca dados do carro no plant snapshot (fallback)
+  const getCarFromPlant = React.useCallback((carId: string): unknown => {
+    const id = String(carId);
+    for (const shop of plant.shops) {
+      const lines = shop?.lines ?? [];
+      for (const line of lines) {
+        const stations = line?.stations ?? [];
+        for (const st of stations) {
+          const cc = st.currentCar as { id?: unknown } | undefined;
+          if (cc && String(cc.id) === id) return cc;
+        }
+      }
+    }
+    return undefined;
+  }, [plant]);
+
+  // Busca dados do carro: 1) socket CARS_STATE, 2) plant snapshot, 3) fallback { id }
+  const getCarData = React.useCallback((carId: string): unknown => {
+    // 1. Primeiro tenta buscar do socket CARS_STATE (fonte primária)
+    const fromSocket = carsMap[String(carId)];
+    if (fromSocket) return fromSocket;
+
+    // 2. Fallback: busca no plant snapshot (currentCar das estações)
+    const fromPlant = getCarFromPlant(carId);
+    if (fromPlant) return fromPlant;
+
+    // 3. Último fallback: objeto mínimo com apenas o id
+    return { id: carId };
+  }, [carsMap, getCarFromPlant]);
 
   const fetchHttp = React.useCallback(async () => {
     try {
@@ -293,12 +328,11 @@ export default function BuffersPage() {
                             size="small"
                             onClick={(e) => {
                               e.stopPropagation();
-                              const car = carsMap[String(carId)];
                               setSelection({
                                 kind: 'car',
                                 title: `Car ${carId}`,
                                 carId: String(carId),
-                                data: car ?? { id: carId },
+                                data: getCarData(carId),
                               });
                             }}
                             aria-label={`Ver carro ${carId}`}

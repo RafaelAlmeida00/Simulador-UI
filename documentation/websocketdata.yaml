@@ -302,31 +302,13 @@ x-socketio:
                 items:
                   type: object
                   properties:
+                    _linesArray:
+                      type: string
+                      nullable: true
                     name: { type: string }
-                    lines:
-                      type: array
-                      items:
-                        type: object
-                        properties:
-                          name: { type: string }
-                          taktTime: { type: number }
-                          productionTime: { type: number }
-                          shiftStart: { type: string }
-                          shiftEnd: { type: string }
-                          stations:
-                            type: array
-                            items:
-                              type: object
-                              properties:
-                                name: { type: string }
-                                cycleTime: { type: number }
-                                defectRate: { type: number }
-                                currentCar:
-                                  type: object
-                                  nullable: true
-                                status:
-                                  type: string
-                                  enum: ["IDLE", "WORKING", "BLOCKED", "STARVED", "STOPPED"]
+                    bufferCapacity: { type: number }
+                    reworkBuffer: { type: number }
+                    lines: { type: object }
               buffers:
                 type: array
                 items:
@@ -1111,31 +1093,13 @@ components:
                 items:
                   type: object
                   properties:
+                    _linesArray:
+                      type: string
+                      nullable: true
                     name: { type: string }
-                    lines:
-                      type: array
-                      items:
-                        type: object
-                        properties:
-                          name: { type: string }
-                          taktTime: { type: number }
-                          productionTime: { type: number }
-                          shiftStart: { type: string }
-                          shiftEnd: { type: string }
-                          stations:
-                            type: array
-                            items:
-                              type: object
-                              properties:
-                                name: { type: string }
-                                cycleTime: { type: number }
-                                defectRate: { type: number }
-                                currentCar:
-                                  type: object
-                                  nullable: true
-                                status:
-                                  type: string
-                                  enum: ["IDLE", "WORKING", "BLOCKED", "STARVED", "STOPPED"]
+                    bufferCapacity: { type: number }
+                    reworkBuffer: { type: number }
+                    lines: { type: object }
               buffers:
                 type: array
                 items:

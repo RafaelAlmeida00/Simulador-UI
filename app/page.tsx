@@ -23,7 +23,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import { AppHeader } from './src/components/AppHeader';
 import { DetailsDrawer } from './src/components/DetailsDrawer';
 import { useSimulatorStore } from './src/hooks/useSimulatorStore';
-import { carsById, stopForStationByStartTime } from './src/stores/simulatorStore';
+import { stopForStationByStartTime } from './src/stores/simulatorStore';
 import type { Stop } from './src/stores/simulatorStore';
 import type { BufferItem } from './src/stores/simulatorStore';
 import { normalizePlantSnapshot } from './src/utils/plantNormalize';
@@ -73,7 +73,25 @@ export default function HomePage() {
   }, []);
 
   const buffers = React.useMemo(() => sim.buffersState, [sim.buffersState]);
-  const carsMap = React.useMemo(() => carsById(sim.cars), [sim.cars]);
+
+  // Prefer currentCar embedded in station snapshots when available.
+  // IMPORTANT: Do NOT use socket-provided `cars` map — only read `currentCar` from the plant snapshot.
+  const getCarData = React.useCallback((carId: string | undefined) => {
+    if (!carId) return undefined;
+    const id = String(carId);
+    for (const shop of plant.shops) {
+      const lines = shop?.lines ?? [];
+      for (const line of lines) {
+        const stations = line?.stations ?? [];
+        for (const st of stations) {
+          const cc = st.currentCar as { id?: unknown } | undefined;
+          if (cc && String(cc.id) === id) return cc;
+        }
+      }
+    }
+    // Not found in plant snapshot — do not fall back to socket cars
+    return undefined;
+  }, [plant]);
 
   const nowSimMs = mounted ? (sim.health?.data?.simulatorTimestamp ?? null) : null;
 
@@ -309,21 +327,21 @@ export default function HomePage() {
                         size="small"
                         onClick={(e) => {
                           e.stopPropagation();
-                          const car = carsMap[String(carId)];
+                          const id = String(carId);
+                          const car = getCarData(id);
                           setSelection({
                             kind: 'car',
-                            title: `Car ${carId}`,
-                            carId: String(carId),
-                            data: car ?? { id: carId },
+                            title: `Car ${id}`,
+                            carId: id,
+                            data: car ?? { id },
                           });
-                          
                         }}
                         aria-label={`Carro ${carId}`}
                         sx={{ color: theme.palette.icon }}
                       >
                         <DirectionsCarIcon fontSize="small" sx={{ color: theme.palette.icon }} />
                       </IconButton>
-                    ))}
+                    ))} 
                   </Box>
                 </Paper>
                 </Tooltip>
@@ -366,12 +384,13 @@ export default function HomePage() {
                           size="small"
                           onClick={(e) => {
                             e.stopPropagation();
-                            const car = carsMap[String(carId)];
+                            const id = String(carId);
+                            const car = getCarData(id);
                             setSelection({
                               kind: 'car',
-                              title: `Car ${carId}`,
-                              carId: String(carId),
-                              data: car ?? { id: carId },
+                              title: `Car ${id}`,
+                              carId: id,
+                              data: car ?? { id },
                             });
                           }}
                           aria-label={`Carro ${carId}`}
@@ -379,7 +398,7 @@ export default function HomePage() {
                         >
                           <DirectionsCarIcon fontSize="small" />
                         </IconButton>
-                      ))}
+                      ))} 
                     </Box>
                   </Paper>
                 );
@@ -429,7 +448,8 @@ export default function HomePage() {
                   const lineCandidates = [currentLine?.name, currentLine?.id].filter((v): v is string => Boolean(v));
                   const stationCandidates = [st.name, st.id].filter((v): v is string => Boolean(v));
 
-                  const car = carId ? carsMap[carId] : undefined;
+                  // Use station snapshot's currentCar trace for accurate enter time
+                  const car = st.currentCar;
                   const trace = (car as { trace?: unknown } | undefined)?.trace;
                   const enterTs = Array.isArray(trace)
                     ? trace.find((t) => {
@@ -514,7 +534,7 @@ export default function HomePage() {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   const carId = String(st.currentCarId);
-                                  const car = carsMap[carId];
+                                  const car = st.currentCar;
                                   setSelection({ kind: 'car', title: `Car ${carId}`, carId, data: car ?? { id: carId } });
                                 }}
                                 aria-label={`Abrir carro ${st.currentCarId}`}

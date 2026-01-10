@@ -6,6 +6,7 @@ export type NormalizedStation = {
   taktMn?: number;
   taktSg?: number;
   currentCarId?: string;
+  currentCar?: unknown;
   occupied?: boolean;
   isStopped?: boolean;
   stopReason?: string;
@@ -97,12 +98,16 @@ function normalizeStations(stationsRaw: unknown): NormalizedStation[] {
     const startStop =
       typeof startStopRaw === 'number' || typeof startStopRaw === 'string' ? startStopRaw : undefined;
 
+    // Keep the full currentCar object from the raw station snapshot (if provided)
+    const currentCar = get(stRaw, 'currentCar') ?? getPath(stRaw, ['car']);
+
     return {
       id,
       name,
       taktMn,
       taktSg,
       currentCarId,
+      currentCar,
       occupied,
       isStopped,
       stopReason,
@@ -134,6 +139,22 @@ function normalizeLines(linesRaw: unknown, fallbackShop?: string): NormalizedLin
 }
 
 export function normalizePlantSnapshot(snapshot: unknown): NormalizedPlant {
+  // Handle new format: array of shops directly
+  if (Array.isArray(snapshot)) {
+    const shops: NormalizedShop[] = snapshot.map((shopRaw: unknown, index: number) => {
+      const id = pickFirstString(get(shopRaw, 'id'), get(shopRaw, 'shopId'), get(shopRaw, 'name'), get(shopRaw, 'shop')) ?? `shop-${index}`;
+      const name = pickFirstString(get(shopRaw, 'name'), get(shopRaw, 'shop'), get(shopRaw, 'id')) ?? `Shop ${index + 1}`;
+      const linesRaw = get(shopRaw, 'lines') ?? [];
+      return {
+        id,
+        name,
+        lines: normalizeLines(linesRaw, name),
+        raw: shopRaw,
+      };
+    });
+    return { shops };
+  }
+
   const s = get(snapshot, 'data') ?? snapshot;
 
   // 1) shops (array)
