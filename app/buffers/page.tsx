@@ -31,10 +31,7 @@ type DetailSelection =
   | { kind: 'buffer'; title: string; data: unknown }
   | { kind: 'car'; title: string; carId: string; data: unknown };
 
-type BufferItemUi = BufferItem & {
-  /** Identificador do registro vindo do HTTP (para key estável) */
-  __rowId?: string | number;
-};
+type BufferItemUi = BufferItem;
 
 function asStringArray(v: unknown): string[] {
   if (Array.isArray(v)) return v.map((x) => String(x));
@@ -59,7 +56,6 @@ function normalizeBufferItem(raw: unknown): BufferItemUi | null {
   if (typeof r.id === 'string') {
     return {
       id: r.id,
-      bufferId: r.id,
       from: typeof r.from === 'string' ? r.from : undefined,
       to: typeof r.to === 'string' ? r.to : undefined,
       capacity: typeof r.capacity === 'number' ? r.capacity : undefined,
@@ -71,17 +67,14 @@ function normalizeBufferItem(raw: unknown): BufferItemUi | null {
   }
 
   // HTTP API shape (snake_case)
-  const apiId = r.buffer_id;
+  const apiId = r.id;
   if (typeof apiId !== 'string' || !apiId.trim()) return null;
 
-  const rowId = typeof r.id === 'number' || typeof r.id === 'string' ? r.id : undefined;
   const currentCount = typeof r.current_count === 'number' ? r.current_count : undefined;
   return {
     id: apiId,
-    bufferId: apiId,
-    __rowId: rowId,
-    from: typeof r.from_location === 'string' ? r.from_location : undefined,
-    to: typeof r.to_location === 'string' ? r.to_location : undefined,
+    from: typeof r.from === 'string' ? r.from : undefined,
+    to: typeof r.to === 'string' ? r.to : undefined,
     capacity: typeof r.capacity === 'number' ? r.capacity : undefined,
     currentCount,
     status: typeof r.status === 'string' ? r.status : undefined,
@@ -90,25 +83,18 @@ function normalizeBufferItem(raw: unknown): BufferItemUi | null {
   };
 }
 
-function asBufferArray(payload: unknown): BufferItemUi[] {
+function asBufferArray(payload: unknown, defaultBufferCount: number): BufferItemUi[] {
   const list = Array.isArray(payload)
     ? payload
     : payload && typeof payload === 'object' && Array.isArray((payload as Record<string, unknown>).data)
       ? ((payload as Record<string, unknown>).data as unknown[])
       : [];
 
-  // Pega o created_at do primeiro item para filtrar apenas o snapshot mais recente
   if (list.length === 0) return [];
-  
-  const firstItem = list[0] as Record<string, unknown> | undefined;
-  const targetCreatedAt = firstItem?.created_at;
 
-  // Filtra apenas os itens com o mesmo created_at (mesmo snapshot)
-  const filteredList = targetCreatedAt
-    ? list.filter((item) => {
-        const r = item as Record<string, unknown>;
-        return r.created_at === targetCreatedAt;
-      })
+  // Pega apenas os últimos N buffers (onde N é a capacidade padrão do socket)
+  const filteredList = list.length > defaultBufferCount
+    ? list.slice(-defaultBufferCount)
     : list;
 
   const normalized: BufferItemUi[] = [];
@@ -176,15 +162,15 @@ export default function BuffersPage() {
       setLoadingHttp(true);
       setError(null);
       const res = await http.get('/buffers');
-      setHttpBuffers(asBufferArray(res.data));
+      setHttpBuffers(asBufferArray(res.data, sim.buffersState.length));
       // Regra 4: Fechar o diálogo - Feedback de conclusão
       setSnackbar({ open: true, message: 'Dados atualizados com sucesso', severity: 'success' });
-    } catch (e) {
+    } catch {
       setError('Falha ao carregar os buffers. Verifique a conexão com a API.');
     } finally {
       setLoadingHttp(false);
     }
-  }, []);
+  }, [sim.buffersState.length]);
 
   React.useEffect(() => {
     // inicia desincronizado, mas já carrega via HTTP
@@ -291,8 +277,8 @@ export default function BuffersPage() {
               const isAvailable = String(b?.status) === 'AVAILABLE' || String(b?.status) === 'EMPTY';
 
               return (
-                <Tooltip 
-                  key={String(b?.__rowId ?? `${String(b?.id ?? '')}::${String(b?.from ?? '')}::${String(b?.to ?? '')}::${idx}`)}
+                <Tooltip
+                  key={String(b?.id ?? `${String(b?.from ?? '')}::${String(b?.to ?? '')}::${idx}`)}
                   title={`Clique para ver detalhes. Status: ${b?.status ?? 'N/A'}`}
                   arrow
                 >

@@ -8,7 +8,7 @@ export type HealthData = {
   serverStatus?: 'healthy' | 'unhealthy' | string;
   simulatorStatus?: 'running' | 'stopped' | 'paused' | string;
   timestamp?: number;
-  simulator?: any;
+  simulator?: unknown;
   simulatorTimestamp?: number;
   simulatorTimeString?: string;
   uptime?: number;
@@ -17,11 +17,11 @@ export type HealthData = {
 export type HealthPayload = SocketEnvelope<'HEALTH', HealthData>;
 
 export type BufferStatus = 'EMPTY' | 'AVAILABLE' | 'FULL' | string;
-export type BufferType = 'BUFFER' | 'REWORK_BUFFER' | string;
+export type BufferType = 'BUFFER' | 'REWORK_BUFFER' | 'PART_BUFFER' | string;
 
 export type BufferItem = {
   id: string;
-  bufferId: string;
+  betweenShopOrLine?: string;
   from?: string;
   to?: string;
   capacity?: number;
@@ -209,8 +209,24 @@ export const simulatorStore = {
     const data: unknown = payload?.data;
 
     if (Array.isArray(data)) {
-      // BUFFERS_STATE geralmente vem como array
-      buffersState = data as BufferItem[];
+      // BUFFERS_STATE vem como array de BufferItem
+      // Filtra e converte para garantir o tipo correto
+      buffersState = (data as unknown[])
+        .filter((item): item is BufferItem => isRecord(item) && typeof (item as Record<string, unknown>).id === 'string')
+        .map((item) => {
+          const r = item as Record<string, unknown>;
+          return {
+            id: String(r.id),
+            betweenShopOrLine: typeof r.betweenShopOrLine === 'string' ? r.betweenShopOrLine : undefined,
+            from: typeof r.from === 'string' ? r.from : undefined,
+            to: typeof r.to === 'string' ? r.to : undefined,
+            capacity: typeof r.capacity === 'number' ? r.capacity : undefined,
+            currentCount: typeof r.currentCount === 'number' ? r.currentCount : undefined,
+            status: typeof r.status === 'string' ? r.status : undefined,
+            type: typeof r.type === 'string' ? r.type : undefined,
+            carIds: Array.isArray(r.carIds) ? (r.carIds as unknown[]).map(String) : [],
+          } as BufferItem;
+        });
     } else if (isRecord(data) && 'buffer' in data) {
       const b = (data as { buffer?: unknown }).buffer;
       if (b && isRecord(b) && typeof b.id === 'string') {
