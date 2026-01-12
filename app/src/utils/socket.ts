@@ -1,11 +1,13 @@
-// util/socket.ts (exemplo)
+// util/socket.ts
 import { io, Socket } from 'socket.io-client';
+import { throttle } from 'lodash-es';
 import { simulatorStore } from '../stores/simulatorStore';
 import { getRuntimeEnv } from './runtimeEnv';
 
 let socket: Socket | null = null;
 
-const DEFAULT_CHANNELS = ['plantstate', 'events', 'stops', 'buffers', 'health', 'cars', 'oee'] as const;
+// Events channel removed - now API-only
+const DEFAULT_CHANNELS = ['plantstate', 'stops', 'buffers', 'health', 'cars', 'oee', 'mttr_mtbf'] as const;
 
 function ensureDefaultSubscriptions(s: Socket) {
   for (const ch of DEFAULT_CHANNELS) {
@@ -22,13 +24,17 @@ function createSocket(): Socket {
   const { socketUrl } = getRuntimeEnv();
   const s = io(socketUrl || undefined, {
     transports: ['websocket'],
-    path: '/socket.io' // opcional se você usa padrão
+    path: '/socket.io'
   });
+
+  // Throttle plantstate updates to 100ms to reduce re-renders
+  const throttledPlantStateUpdate = throttle((payload) => {
+    simulatorStore.setPlantState(payload);
+  }, 100, { leading: true, trailing: true });
 
   s.on('connect', () => {
     simulatorStore.setConnected(true);
     console.log('[socket] connected', { id: s.id });
-    // inscreve assim que conectar
     ensureDefaultSubscriptions(s);
   });
 
@@ -37,48 +43,39 @@ function createSocket(): Socket {
     console.log('[socket] disconnected', reason);
   });
 
-  // Escutar os nomes que o servidor realmente emite
-  s.on('plantstate', (payload) => {
-    console.log(payload);
+  // Plant state channel with throttling
+  s.on('plantstate', throttledPlantStateUpdate);
 
-    simulatorStore.setPlantState(payload);
-  });
-  s.on('events', (payload) => {
-    console.log(payload);
-
-    simulatorStore.setEvents(payload);
-  });
-  // alias legacy (websocketdata.yaml: emits também 'car_event')
-  s.on('car_event', (payload) => {
-    console.log(payload);
-
-    simulatorStore.setEvents(payload);
-  });
+  // Stops channel
   s.on('stops', (payload) => {
-    console.log(payload);
-
     simulatorStore.setStops(payload);
   });
-  s.on('buffers', (payload) => {
-    console.log(payload);
 
+  // Buffers channel
+  s.on('buffers', (payload) => {
     simulatorStore.setBuffers(payload);
   });
-  s.on('health', (payload) => {
-    console.log(payload);
 
+  // Health channel
+  s.on('health', (payload) => {
     simulatorStore.setHealth(payload);
   });
-  s.on('cars', (payload) => {
-    console.log(payload);
 
+  // Cars channel
+  s.on('cars', (payload) => {
     simulatorStore.setCars(payload);
   });
-  s.on('oee', (payload) => {
-    console.log(payload);
 
+  // OEE channel
+  s.on('oee', (payload) => {
     simulatorStore.setOEE(payload);
   });
+
+  // MTTR/MTBF channel
+  s.on('mttr_mtbf', (payload) => {
+    simulatorStore.setMTTRMTBF(payload);
+  });
+
   return s;
 }
 
@@ -87,12 +84,10 @@ export function getSocket(): Socket {
   return socket;
 }
 
-// Força reconexão e reinscrição sem dar reload na página.
-// Útil quando o socket foi desconectado manualmente ou perdeu as subscriptions.
+// Force reconnection and resubscription without page reload
 export function reconnectSocket(): Socket {
   const s = getSocket();
 
-  // Se alguém chamou disconnect() em algum ponto, precisamos re-habilitar o connect.
   if (!s.connected) {
     try {
       s.connect();
@@ -101,13 +96,18 @@ export function reconnectSocket(): Socket {
     }
   }
 
-  // Reinscreve de forma idempotente (server-side pode ignorar duplicados).
   ensureDefaultSubscriptions(s);
   return s;
 }
 
-// helper para inscrever dinamicamente
+// Helper to subscribe dynamically
 export function subscribeTo(...channels: string[]) {
   const s = getSocket();
   channels.forEach(ch => s.emit('subscribe', ch));
+}
+
+// Helper to unsubscribe from channels
+export function unsubscribeFrom(...channels: string[]) {
+  const s = getSocket();
+  channels.forEach(ch => s.emit('unsubscribe', ch));
 }

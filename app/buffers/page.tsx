@@ -1,196 +1,54 @@
 'use client';
 
 import * as React from 'react';
+import { List } from 'react-window';
 import Box from '@mui/material/Box';
-import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
-import Button from '@mui/material/Button';
 import Stack from '@mui/material/Stack';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
-import Snackbar from '@mui/material/Snackbar';
-import Alert from '@mui/material/Alert';
-import { useTheme } from '@mui/material/styles';
-
-import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
-import SyncIcon from '@mui/icons-material/Sync';
-import SyncDisabledIcon from '@mui/icons-material/SyncDisabled';
 import RefreshIcon from '@mui/icons-material/Refresh';
-
 import { AppHeader } from '../src/components/AppHeader';
+import { BufferCardVirtual } from '../src/components/BufferCardVirtual';
 import { DetailsDrawer } from '../src/components/DetailsDrawer';
-import { LoadingState, EmptyState, ErrorState, ConnectionStatus } from '../src/components/FeedbackStates';
-import http from '../src/utils/http';
-import { getSocket, subscribeTo } from '../src/utils/socket';
-import { useSimulatorStore } from '../src/hooks/useSimulatorStore';
-import { carsById } from '../src/stores/simulatorStore';
-import type { BufferItem } from '../src/stores/simulatorStore';
-import { normalizePlantSnapshot } from '../src/utils/plantNormalize';
+import { LoadingState, EmptyState, ConnectionStatus } from '../src/components/FeedbackStates';
+import { getSocket, reconnectSocket } from '../src/utils/socket';
+import { useSimulatorSelector } from '../src/hooks/useSimulatorStore';
+import { useDynamicBufferList } from '../src/hooks/useDynamicBufferList';
+import type { IBuffer, ICar } from '../src/types/socket';
 
 type DetailSelection =
   | { kind: 'buffer'; title: string; data: unknown }
   | { kind: 'car'; title: string; carId: string; data: unknown };
 
-type BufferItemUi = BufferItem;
-
-function asStringArray(v: unknown): string[] {
-  if (Array.isArray(v)) return v.map((x) => String(x));
-  if (typeof v === 'string') {
-    const s = v.trim();
-    if (!s) return [];
-    try {
-      const parsed = JSON.parse(s);
-      if (Array.isArray(parsed)) return parsed.map((x) => String(x));
-    } catch {
-      // ignore
-    }
-  }
-  return [];
-}
-
-function normalizeBufferItem(raw: unknown): BufferItemUi | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const r = raw as Record<string, unknown>;
-
-  // Socket/UI shape (já normalizado)
-  if (typeof r.id === 'string') {
-    return {
-      id: r.id,
-      from: typeof r.from === 'string' ? r.from : undefined,
-      to: typeof r.to === 'string' ? r.to : undefined,
-      capacity: typeof r.capacity === 'number' ? r.capacity : undefined,
-      currentCount: typeof r.currentCount === 'number' ? r.currentCount : undefined,
-      status: typeof r.status === 'string' ? r.status : undefined,
-      type: typeof r.type === 'string' ? r.type : undefined,
-      carIds: asStringArray(r.carIds),
-    };
-  }
-
-  // HTTP API shape (snake_case)
-  const apiId = r.id;
-  if (typeof apiId !== 'string' || !apiId.trim()) return null;
-
-  const currentCount = typeof r.current_count === 'number' ? r.current_count : undefined;
-  return {
-    id: apiId,
-    from: typeof r.from === 'string' ? r.from : undefined,
-    to: typeof r.to === 'string' ? r.to : undefined,
-    capacity: typeof r.capacity === 'number' ? r.capacity : undefined,
-    currentCount,
-    status: typeof r.status === 'string' ? r.status : undefined,
-    type: typeof r.type === 'string' ? r.type : undefined,
-    carIds: asStringArray(r.car_ids),
-  };
-}
-
-function asBufferArray(payload: unknown, defaultBufferCount: number): BufferItemUi[] {
-  const list = Array.isArray(payload)
-    ? payload
-    : payload && typeof payload === 'object' && Array.isArray((payload as Record<string, unknown>).data)
-      ? ((payload as Record<string, unknown>).data as unknown[])
-      : [];
-
-  if (list.length === 0) return [];
-
-  // Pega apenas os últimos N buffers (onde N é a capacidade padrão do socket)
-  const filteredList = list.length > defaultBufferCount
-    ? list.slice(-defaultBufferCount)
-    : list;
-
-  const normalized: BufferItemUi[] = [];
-  for (const item of filteredList) {
-    const b = normalizeBufferItem(item);
-    if (b) normalized.push(b);
-  }
-  return normalized;
-}
-
 export default function BuffersPage() {
-  const theme = useTheme();
-  const sim = useSimulatorStore();
-
-  const [synced, setSynced] = React.useState(false);
-  const [loadingHttp, setLoadingHttp] = React.useState(false);
-  const [httpBuffers, setHttpBuffers] = React.useState<BufferItemUi[]>([]);
-  const [error, setError] = React.useState<string | null>(null);
-  const [snackbar, setSnackbar] = React.useState<{ open: boolean; message: string; severity: 'success' | 'info' }>({
-    open: false,
-    message: '',
-    severity: 'info',
-  });
+  const buffers = useSimulatorSelector(s => s.buffersState);
+  const sim = useSimulatorSelector(s => s.connected);
 
   const [selection, setSelection] = React.useState<DetailSelection | null>(null);
-
-  // Socket cars (CARS_STATE) - fonte primária
-  const carsMap = React.useMemo(() => carsById(sim.cars), [sim.cars]);
-
-  // Plant snapshot para fallback - busca currentCar das estações
-  const plant = React.useMemo(() => normalizePlantSnapshot(sim.plantState), [sim.plantState]);
-
-  // Busca dados do carro no plant snapshot (fallback)
-  const getCarFromPlant = React.useCallback((carId: string): unknown => {
-    const id = String(carId);
-    for (const shop of plant.shops) {
-      const lines = shop?.lines ?? [];
-      for (const line of lines) {
-        const stations = line?.stations ?? [];
-        for (const st of stations) {
-          const cc = st.currentCar as { id?: unknown } | undefined;
-          if (cc && String(cc.id) === id) return cc;
-        }
-      }
-    }
-    return undefined;
-  }, [plant]);
-
-  // Busca dados do carro: 1) socket CARS_STATE, 2) plant snapshot, 3) fallback { id }
-  const getCarData = React.useCallback((carId: string): unknown => {
-    // 1. Primeiro tenta buscar do socket CARS_STATE (fonte primária)
-    const fromSocket = carsMap[String(carId)];
-    if (fromSocket) return fromSocket;
-
-    // 2. Fallback: busca no plant snapshot (currentCar das estações)
-    const fromPlant = getCarFromPlant(carId);
-    if (fromPlant) return fromPlant;
-
-    // 3. Último fallback: objeto mínimo com apenas o id
-    return { id: carId };
-  }, [carsMap, getCarFromPlant]);
-
-  const fetchHttp = React.useCallback(async () => {
-    try {
-      setLoadingHttp(true);
-      setError(null);
-      const res = await http.get('/buffers');
-      setHttpBuffers(asBufferArray(res.data, sim.buffersState.length));
-      // Regra 4: Fechar o diálogo - Feedback de conclusão
-      setSnackbar({ open: true, message: 'Dados atualizados com sucesso', severity: 'success' });
-    } catch {
-      setError('Falha ao carregar os buffers. Verifique a conexão com a API.');
-    } finally {
-      setLoadingHttp(false);
-    }
-  }, [sim.buffersState.length]);
+  const rowHeight = useDynamicBufferList();
 
   React.useEffect(() => {
-    // inicia desincronizado, mas já carrega via HTTP
-    fetchHttp();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    getSocket();
   }, []);
 
-  const buffers: BufferItemUi[] = synced ? (sim.buffersState as BufferItemUi[]) : httpBuffers;
+  const handleBufferClick = React.useCallback((buffer: IBuffer) => {
+    setSelection({
+      kind: 'buffer',
+      title: `Buffer ${buffer.id}`,
+      data: buffer,
+    });
+  }, []);
 
-  // Regra 2: Atalhos - Tecla R para atualizar
-  React.useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === 'r' && !synced && !loadingHttp) {
-        e.preventDefault();
-        fetchHttp();
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [synced, loadingHttp, fetchHttp]);
+  const handleCarClick = React.useCallback((car: ICar, carId: string) => {
+    setSelection({
+      kind: 'car',
+      title: `Car ${carId}`,
+      carId,
+      data: car,
+    });
+  }, []);
+
 
   return (
     <Box sx={{ minHeight: '100vh' }}>
@@ -201,153 +59,55 @@ export default function BuffersPage() {
           <Typography variant="h6" sx={{ fontWeight: 800 }}>
             Buffers
           </Typography>
-          {/* Regra 3: Feedback - Status de sincronização */}
-          <ConnectionStatus 
-            connected={synced} 
-            connectedLabel="Sincronizado" 
-            disconnectedLabel="Manual" 
-          />
+          <Stack direction="row" alignItems="center" gap={1}>
+            <ConnectionStatus
+              connected={sim}
+              connectedLabel="Online"
+              disconnectedLabel="Offline"
+            />
+            {!sim && (
+              <Tooltip title="Reconectar" arrow>
+                <IconButton size="small" onClick={() => reconnectSocket()}>
+                  <RefreshIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
+          </Stack>
         </Stack>
 
-        <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
-          {/* Regra 7: Controle do usuário - Botão de sincronização */}
-          <Tooltip title={synced ? 'Desativar atualização automática' : 'Ativar atualização em tempo real'} arrow>
-            <Button
-              variant="contained"
-              color={synced ? 'success' : 'primary'}
-              startIcon={synced ? <SyncIcon /> : <SyncDisabledIcon />}
-              onClick={() => {
-                if (!synced) {
-                  getSocket();
-                  subscribeTo('buffers');
-                  setSynced(true);
-                  setSnackbar({ open: true, message: 'Sincronização ativada - dados em tempo real', severity: 'info' });
-                } else {
-                  setSynced(false);
-                  setSnackbar({ open: true, message: 'Sincronização desativada', severity: 'info' });
-                }
-              }}
-            >
-              {synced ? 'Sincronizado' : 'Sincronizar'}
-            </Button>
-          </Tooltip>
-
-          {/* Regra 2: Atalhos - Dica de atalho no tooltip */}
-          {!synced && (
-            <Tooltip title="Atualizar dados (Atalho: R)" arrow>
-              <Button 
-                variant="outlined" 
-                startIcon={<RefreshIcon />}
-                onClick={fetchHttp} 
-                disabled={loadingHttp}
-              >
-                Atualizar
-              </Button>
-            </Tooltip>
-          )}
-        </Box>
-
-        {/* Regra 3: Feedback - Estados de loading/error/empty */}
-        {loadingHttp && !synced && (
-          <LoadingState message="Carregando buffers..." />
+        {/* Loading state when no data yet */}
+        {!sim && buffers.length === 0 && (
+          <LoadingState message="Conectando ao simulador..." />
         )}
 
-        {error && !loadingHttp && (
-          <ErrorState message={error} onRetry={fetchHttp} />
+        {/* Empty state */}
+        {sim && buffers.length === 0 && (
+          <EmptyState message="Nenhum buffer disponivel no momento." />
         )}
 
-        {!loadingHttp && !error && buffers.length === 0 && (
-          <EmptyState 
-            message="Nenhum buffer disponível no momento." 
-            action={fetchHttp}
-            actionLabel="Atualizar"
-          />
-        )}
-
-        {!loadingHttp && !error && buffers.length > 0 && (
-          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1.5 }}>
-            {/* Regra 1: Consistência - Contador de resultados */}
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-              {buffers.length} buffer{buffers.length !== 1 ? 's' : ''} disponíve{buffers.length !== 1 ? 'is' : 'l'}
+        {/* Buffer list */}
+        {buffers.length > 0 && (
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              {buffers.length} buffer{buffers.length !== 1 ? 's' : ''} disponive{buffers.length !== 1 ? 'is' : 'l'}
             </Typography>
 
-            {buffers.map((b, idx) => {
-              const count = b?.currentCount ?? (Array.isArray(b?.carIds) ? b.carIds.length : 0);
-              const cap = b?.capacity ?? 0;
-              const isAvailable = String(b?.status) === 'AVAILABLE' || String(b?.status) === 'EMPTY';
-
-              return (
-                <Tooltip
-                  key={String(b?.id ?? `${String(b?.from ?? '')}::${String(b?.to ?? '')}::${idx}`)}
-                  title={`Clique para ver detalhes. Status: ${b?.status ?? 'N/A'}`}
-                  arrow
-                >
-                  <Paper
-                    onClick={() => setSelection({ kind: 'buffer', title: `Buffer ${b?.id ?? ''}`, data: b })}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Buffer de ${b?.from ?? '--'} para ${b?.to ?? '--'}, ${count} de ${cap} ocupados`}
-                    sx={{
-                      p: 1.25,
-                      width: { xs: '100%', sm: 520 },
-                      cursor: 'pointer',
-                      bgcolor: isAvailable ? theme.palette.success.light : theme.palette.error.light,
-                      boxShadow: 6,
-                      transition: 'transform 140ms ease, box-shadow 140ms ease',
-                      '&:hover': { transform: 'translateY(-2px)', boxShadow: 10 },
-                      '&:focus': { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: 2 },
-                    }}
-                  >
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1 }}>
-                      <Typography variant="subtitle2" sx={{ fontWeight: 800, color: theme.palette.textStation }}>
-                        {b?.from ?? '--'} → {b?.to ?? '--'}
-                      </Typography>
-                      <Typography variant="subtitle2" sx={{ fontWeight: 800, color: theme.palette.textStation }}>
-                        {count}/{cap}
-                      </Typography>
-                    </Box>
-
-                    <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', mt: 1 }}>
-                      {(b?.carIds ?? []).map((carId: string) => (
-                        <Tooltip key={carId} title={`Ver detalhes do carro ${carId}`} arrow>
-                          <IconButton
-                            size="small"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelection({
-                                kind: 'car',
-                                title: `Car ${carId}`,
-                                carId: String(carId),
-                                data: getCarData(carId),
-                              });
-                            }}
-                            aria-label={`Ver carro ${carId}`}
-                            sx={{ color: theme.palette.icon }}
-                          >
-                            <DirectionsCarIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      ))}
-                    </Stack>
-                  </Paper>
-                </Tooltip>
-              );
-            })}
+            <Box sx={{ width: '100%', maxWidth: 700, display: 'flex', justifyContent: 'center' }}>
+              <List
+                rowCount={buffers.length}
+                rowHeight={rowHeight}
+                rowComponent={BufferCardVirtual}
+                rowProps={{
+                  buffers,
+                  onBufferClick: handleBufferClick,
+                  onCarClick: handleCarClick,
+                }}
+                style={{ height: 600, width: '100%' }}
+              />
+            </Box>
           </Box>
         )}
       </Box>
-
-      {/* Regra 3: Feedback - Snackbar de notificações */}
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={3000}
-        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-      >
-        <Alert severity={snackbar.severity} onClose={() => setSnackbar((s) => ({ ...s, open: false }))}>
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
 
       <DetailsDrawer
         open={Boolean(selection)}

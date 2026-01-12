@@ -29,10 +29,11 @@ import { AppHeader } from '../src/components/AppHeader';
 import { DetailsDrawer } from '../src/components/DetailsDrawer';
 import { LoadingState, EmptyState, ErrorState, ResultsCount } from '../src/components/FeedbackStates';
 import http from '../src/utils/http';
-import type { Stop } from '../src/stores/simulatorStore';
+import type { IStopLine } from '../src/types/socket';
 import { formatEpochMs } from '../src/utils/timeFormat';
 import { parseDateTimeLocal } from '../src/utils/date';
-import { asArrayFromPayload, getStringField, toNumber, uniqStrings } from '../src/utils/safe';
+import { asArrayFromPayload, uniqStrings } from '../src/utils/safe';
+import { Stop } from '../src/stores/simulatorStore';
 
 type Filters = {
   shop: string;
@@ -53,24 +54,12 @@ function uniq(values: Array<string | undefined | null>): string[] {
   return uniqStrings(values);
 }
 
-function getStartTime(stop: Stop): number {
-  return (
-    toNumber((stop as unknown as Record<string, unknown>).startTime) ??
-    toNumber((stop as unknown as Record<string, unknown>).start_time) ??
-    0
-  );
+function getStartTime(stop: IStopLine): number {
+  return stop.start_time ?? 0;
 }
 
-function getEndTime(stop: Stop): number {
-  return (
-    toNumber((stop as unknown as Record<string, unknown>).endTime) ??
-    toNumber((stop as unknown as Record<string, unknown>).end_time) ??
-    0
-  );
-}
-
-function getField(stop: Stop, key: string): string {
-  return getStringField(stop, key);
+function getEndTime(stop: IStopLine): number {
+  return stop.end_time ?? 0;
 }
 
 export default function StoppagesPage() {
@@ -105,7 +94,7 @@ export default function StoppagesPage() {
       setError(null);
       const res = await http.get('/stops');
       setStops(asArrayFromPayload<Stop>(res.data));
-    } catch (e) {
+    } catch {
       setError('Falha ao carregar os dados de paradas. Verifique a conexão com a API.');
     } finally {
       setLoading(false);
@@ -141,14 +130,14 @@ export default function StoppagesPage() {
 
   const options = React.useMemo(() => {
     return {
-      shop: uniq(stops.map((s) => (s as Stop).shop)),
-      line: uniq(stops.map((s) => (s as Stop).line)),
-      station: uniq(stops.map((s) => (s as Stop).station)),
-      reason: uniq(stops.map((s) => (s as Stop).reason)),
-      severity: uniq(stops.map((s) => (s as Stop).severity as string)),
-      status: uniq(stops.map((s) => (s as Stop).status as string)),
-      type: uniq(stops.map((s) => (s as Stop).type)),
-      category: uniq(stops.map((s) => (s as Stop).category)),
+      shop: uniq(stops.map((s) => s.shop)),
+      line: uniq(stops.map((s) => s.line)),
+      station: uniq(stops.map((s) => s.station)),
+      reason: uniq(stops.map((s) => s.reason)),
+      severity: uniq(stops.map((s) => s.severity as string)),
+      status: uniq(stops.map((s) => s.status as string)),
+      type: uniq(stops.map((s) => s.type)),
+      category: uniq(stops.map((s) => s.category)),
     };
   }, [stops]);
 
@@ -357,7 +346,7 @@ export default function StoppagesPage() {
                     return (
                       <TableRow
                         hover
-                        key={`${getField(s, 'id') || idx}-${start}`}
+                        key={`${s.id || idx}-${start}`}
                         onClick={() => setSelection(s)}
                         sx={{ cursor: 'pointer' }}
                       >
@@ -371,7 +360,7 @@ export default function StoppagesPage() {
                         <TableCell>{String(s.category ?? '--')}</TableCell>
                         <TableCell>{start ? formatEpochMs(start) : '--'}</TableCell>
                         <TableCell>{end ? formatEpochMs(end) : '--'}</TableCell>
-                        <TableCell>{String((s as Stop).durationMs ?? '--')}</TableCell>
+                        <TableCell>{String(s.durationMs ?? '--')}</TableCell>
                       </TableRow>
                     );
                   })}

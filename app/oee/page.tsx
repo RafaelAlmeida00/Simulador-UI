@@ -19,27 +19,21 @@ import MenuItem from '@mui/material/MenuItem';
 import CircularProgress from '@mui/material/CircularProgress';
 import Tooltip from '@mui/material/Tooltip';
 import Chip from '@mui/material/Chip';
-import Button from '@mui/material/Button';
 import { useTheme } from '@mui/material/styles';
-
-import RefreshIcon from '@mui/icons-material/Refresh';
-
 import { AppHeader } from '../src/components/AppHeader';
 import { DetailsDrawer } from '../src/components/DetailsDrawer';
-import { ConnectionStatus, ResultsCount } from '../src/components/FeedbackStates';
+import { ResultsCount } from '../src/components/FeedbackStates';
 import http from '../src/utils/http';
-import { useSimulatorStore } from '../src/hooks/useSimulatorStore';
+import { useSimulatorSelector } from '../src/hooks/useSimulatorStore';
 import { getSocket, subscribeTo } from '../src/utils/socket';
 import { normalizePlantSnapshot } from '../src/utils/plantNormalize';
 import { formatEpochMs } from '../src/utils/timeFormat';
 import { ymdFromEpochMs } from '../src/utils/date';
-import { asArrayFromPayload, getStringField, toNumber as toNumberSafe, uniqStrings } from '../src/utils/safe';
+import { asArrayFromPayload, getStringField, uniqStrings } from '../src/utils/safe';
 import { MetricValue } from '../src/components/MetricValue';
-import type { Stop } from '../src/stores/simulatorStore';
+import type { IStopLine, OEEDataEmit } from '../src/types/socket';
+import { Stop } from '../src/stores/simulatorStore';
 
-// ─────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────
 
 function todayStr(epochMs: number): string {
   return ymdFromEpochMs(epochMs);
@@ -53,48 +47,25 @@ function asArray<T>(payload: unknown): T[] {
   return asArrayFromPayload<T>(payload);
 }
 
-function toNumber(v: unknown): number | undefined {
-  return toNumberSafe(v);
+function getStartTime(stop: IStopLine): number {
+  return stop.start_time;
 }
 
-function getStartTime(stop: Stop): number {
-  const rec = stop as unknown as Record<string, unknown>;
-  return toNumber(rec.startTime) ?? toNumber(rec.start_time) ?? 0;
-}
-
-function getEndTime(stop: Stop): number {
-  const rec = stop as unknown as Record<string, unknown>;
-  return toNumber(rec.endTime) ?? toNumber(rec.end_time) ?? 0;
+function getEndTime(stop: IStopLine): number {
+  return stop.end_time ?? 0;
 }
 
 function getField(obj: unknown, key: string): string {
   return getStringField(obj, key);
 }
 
-type OEERecord = {
+type OEERecord = OEEDataEmit & {
   id?: number;
-  date?: string;
-  shop?: string;
-  line?: string;
-  productionTime?: number;
   production_time?: number;
-  carsProduction?: number;
   cars_production?: number;
-  taktTime?: number;
   takt_time?: number;
-  diffTime?: number;
   diff_time?: number;
-  oee?: number;
 };
-
-function normalizeOee(r: OEERecord): { date: string; shop: string; line: string; oee: number } {
-  return {
-    date: r.date ?? '',
-    shop: r.shop ?? '',
-    line: r.line ?? '',
-    oee: r.oee ?? 0,
-  };
-}
 
 function getDiffTimeMinutes(r: OEERecord): number {
   const v = r.diffTime ?? r.diff_time;
@@ -106,39 +77,19 @@ function getCarsProduced(r: OEERecord): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
-function countDistinctLines(records: OEERecord[]): number {
-  const set = new Set<string>();
-  for (const r of records) {
-    const line = (r.line ?? '').trim();
-    if (!line) continue;
-    if (line.toUpperCase() === 'ALL') continue;
-    set.add(line);
-  }
-  return set.size;
+function getJPH(r: OEERecord): number {
+  return typeof r.jph === 'number' && Number.isFinite(r.jph) ? r.jph : 0;
 }
 
-// Hours from 07:00 to 00:00 (next day)
 const HOURS = Array.from({ length: 18 }, (_, i) => (7 + i) % 24);
 
-// Simulator timezone offset (UTC-3 for Brazil)
-// Production starts at 7:00 AM in simulator timezone
-// 7:00 AM at UTC-3 = 10:00 AM UTC
-const SIMULATOR_UTC_OFFSET_HOURS = -3;
-const PRODUCTION_START_HOUR_LOCAL = 7;
-const PRODUCTION_START_HOUR_UTC = PRODUCTION_START_HOUR_LOCAL - SIMULATOR_UTC_OFFSET_HOURS; // 10
-
-// Stops timestamps come in UTC+0, need to add offset to convert to simulator timezone
-const STOPS_UTC_OFFSET_MS = 3 * 3600000; // +3 hours in milliseconds
 
 function hourLabel(h: number): string {
   return `${String(h).padStart(2, '0')}:00`;
 }
 
-// ─────────────────────────────────────────────────────────────
-// Components
-// ─────────────────────────────────────────────────────────────
 
-function PieChart({ value, size = 140 }: { value: number; size?: number }) {
+function PieChart({ value, size = 130 }: { value: number; size?: number }) {
   const theme = useTheme();
   const pct = Math.min(100, Math.max(0, value));
   const strokeWidth = 14;
@@ -182,7 +133,7 @@ function PieChart({ value, size = 140 }: { value: number; size?: number }) {
           justifyContent: 'center',
         }}
       >
-        <Typography variant="h5" sx={{ fontWeight: 800 }}>
+        <Typography variant="h6" sx={{ fontWeight: 800 }}>
           {pct.toFixed(1)}%
         </Typography>
       </Box>
@@ -233,7 +184,7 @@ function BarChart({ data, height = 180 }: { data: { label: string; value: number
 type HourSlot = {
   hour: number;
   type: 'ok' | 'random' | 'propagation' | 'planned';
-  stops: Stop[];
+  stops: IStopLine[];
   stoppedMinutes: number;
 };
 
@@ -349,7 +300,6 @@ type MinuteSlot = {
   type: 'ok' | 'random' | 'propagation' | 'planned';
 };
 
-// Total minutes from 07:00 to 00:00 = 17 hours * 60 = 1020 minutes
 const TOTAL_MINUTES = 17 * 60;
 
 function MinuteTimeline({ slots, height = 80 }: { slots: MinuteSlot[]; height?: number }) {
@@ -367,7 +317,6 @@ function MinuteTimeline({ slots, height = 80 }: { slots: MinuteSlot[]; height?: 
     }
   };
 
-  // Group consecutive minutes with the same type to reduce DOM elements
   const groups: { type: MinuteSlot['type']; count: number }[] = [];
   for (const slot of slots) {
     const last = groups[groups.length - 1];
@@ -394,38 +343,27 @@ function MinuteTimeline({ slots, height = 80 }: { slots: MinuteSlot[]; height?: 
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// Main Page
-// ─────────────────────────────────────────────────────────────
 
 export default function OEEPage() {
   const theme = useTheme();
-  const sim = useSimulatorStore();
-  console.log(sim);
-  
-
-  // Avoid hydration mismatch: do not use Date.now()/new Date() during SSR render.
+  const plantState = useSimulatorSelector((s) => s.plantState?.data);
+  const oeeState = useSimulatorSelector((s) => s.oeeState);
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
-
-  // Use the simulator "today" (from /health payload via websocket)
-  const healthSimMs = sim.health?.data?.simulatorTimestamp;
+  const STOPS_UTC_OFFSET_MS = 3 * 3600000; // +3 hours in milliseconds
+  const healthSimMs = useSimulatorSelector((s) => s.health?.data?.simulatorTimestamp);
   const simNowMs = mounted ? (healthSimMs ?? Date.now()) : null;
   const simToday = React.useMemo(() => (typeof simNowMs === 'number' ? todayStr(simNowMs) : ''), [simNowMs]);
 
-  // Subscribe to oee room
   React.useEffect(() => {
     getSocket();
     subscribeTo('oee');
   }, []);
 
-  // Filters
   const [filterDate, setFilterDate] = React.useState('');
   const [filterShop, setFilterShop] = React.useState('');
   const [filterLine, setFilterLine] = React.useState('');
 
-  // Keep the default date aligned with simulator "today" when health arrives,
-  // but don't override if the user already changed the filter.
   const lastAutoDateRef = React.useRef(simToday);
   React.useEffect(() => {
     if (simToday && filterDate === lastAutoDateRef.current && simToday !== lastAutoDateRef.current) {
@@ -436,8 +374,7 @@ export default function OEEPage() {
 
   const isToday = Boolean(filterDate && simToday && filterDate === simToday);
 
-  // Dynamic options from plantstate
-  const plant = React.useMemo(() => normalizePlantSnapshot(sim.plantState), [sim.plantState]);
+  const plant = React.useMemo(() => normalizePlantSnapshot(plantState), [plantState]);
   const shopOptions = React.useMemo(() => uniq(plant.shops.map((s) => s.name)), [plant.shops]);
   const lineOptions = React.useMemo(() => {
     if (!filterShop) {
@@ -447,34 +384,26 @@ export default function OEEPage() {
     return shop ? uniq(shop.lines.map((l) => l.name)) : [];
   }, [plant.shops, filterShop]);
 
-  // OEE data
   const [oeeLoading, setOeeLoading] = React.useState(false);
   const [oeeApiData, setOeeApiData] = React.useState<OEERecord[]>([]);
+  const [oeeApiFallback, setOeeApiFallback] = React.useState<OEERecord[]>([]);
   const [oeeHistorical, setOeeHistorical] = React.useState<OEERecord[]>([]);
-  const [oeeApiFallback, setOeeApiFallback] = React.useState<OEERecord[]>([]); // Fallback for today when WebSocket fails
   const [usingApiFallback, setUsingApiFallback] = React.useState(false);
-
-  // Stops data
   const [stopsLoading, setStopsLoading] = React.useState(false);
-  const [stops, setStops] = React.useState<Stop[]>([]);
+  const [stops, setStops] = React.useState<IStopLine[]>([]);
 
-  // Check if WebSocket OEE data is valid for today
   const hasValidWebSocketOee = React.useMemo(() => {
-    if (!isToday || !sim.oee) return false;
-    const oeeData = sim.oee.data;
-    return Array.isArray(oeeData) && oeeData.length > 0;
-  }, [isToday, sim.oee]);
+    if (!isToday) return false;
+    return oeeState.length > 0;
+  }, [isToday, oeeState]);
 
-  // Fetch OEE from API - for historical dates OR as fallback for today when WebSocket fails
   React.useEffect(() => {
     if (!filterDate) {
       setOeeLoading(false);
       return;
     }
 
-    // For today: only fetch from API if WebSocket data is not available
     if (isToday && hasValidWebSocketOee) {
-      // WebSocket is working, clear fallback and don't fetch from API
       setOeeApiFallback([]);
       setUsingApiFallback(false);
       setOeeLoading(false);
@@ -489,11 +418,9 @@ export default function OEEPage() {
         if (!cancelled) {
           const data = asArray<OEERecord>(res.data);
           if (isToday) {
-            // Today but WebSocket not available - use API as fallback
             setOeeApiFallback(data);
             setUsingApiFallback(true);
           } else {
-            // Historical date
             setOeeApiData(data);
             setUsingApiFallback(false);
           }
@@ -516,11 +443,9 @@ export default function OEEPage() {
     };
   }, [filterDate, isToday, hasValidWebSocketOee]);
 
-  // Retry WebSocket connection periodically when using API fallback for today
   React.useEffect(() => {
     if (!isToday || hasValidWebSocketOee) return;
 
-    // Attempt to reconnect to WebSocket every 5 seconds
     const retryInterval = setInterval(() => {
       getSocket();
       subscribeTo('oee');
@@ -529,7 +454,6 @@ export default function OEEPage() {
     return () => clearInterval(retryInterval);
   }, [isToday, hasValidWebSocketOee]);
 
-  // Fetch last 7 days OEE
   React.useEffect(() => {
     if (!simNowMs) return;
     let cancelled = false;
@@ -552,7 +476,6 @@ export default function OEEPage() {
     };
   }, [simNowMs]);
 
-  // Fetch stops based on filter
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -561,7 +484,6 @@ export default function OEEPage() {
         const params: Record<string, string> = {};
         if (filterShop) params.shop = filterShop;
         if (filterLine) params.line = filterLine;
-        // Filter by date - convert to timestamp range
         const startOfDay = new Date(filterDate + 'T00:00:00').getTime();
         const endOfDay = new Date(filterDate + 'T23:59:59').getTime();
         params.start_time = String(startOfDay);
@@ -580,26 +502,18 @@ export default function OEEPage() {
     };
   }, [filterDate, filterShop, filterLine]);
 
-  // OEE value to display
   const currentOee = React.useMemo(() => {
-    // For today: prefer WebSocket data, fallback to API
     if (isToday) {
-      // Try WebSocket data first
-      if (hasValidWebSocketOee && sim.oee) {
-        const oeeData = sim.oee.data;
-        if (Array.isArray(oeeData)) {
-          const filtered = oeeData.filter((r: OEERecord) => {
-            if (filterShop && r.shop !== filterShop) return false;
-            if (filterLine && r.line !== filterLine) return false;
-            return true;
-          });
-          if (filtered.length > 0) {
-            const avg = filtered.reduce((sum: number, r: OEERecord) => sum + (r.oee ?? 0), 0) / filtered.length;
-            return avg;
-          }
+      if (hasValidWebSocketOee) {
+        const filtered = oeeState.filter((r) => {
+          if (filterShop && r.shop !== filterShop) return false;
+          if (filterLine && r.line !== `${filterShop}-${filterLine}`) return false;
+          return true;
+        });
+        if (filtered.length > 0) {
+          return filtered.reduce((sum, r) => sum + r.oee, 0) / filtered.length;
         }
       }
-      // Fallback to API data for today
       if (oeeApiFallback.length > 0) {
         const filtered = oeeApiFallback.filter((r) => {
           if (filterShop && r.shop !== filterShop) return false;
@@ -612,7 +526,6 @@ export default function OEEPage() {
       }
       return 0;
     }
-    // Historical: use API data
     const filtered = oeeApiData.filter((r) => {
       if (filterShop && r.shop !== filterShop) return false;
       if (filterLine && r.line !== filterLine) return false;
@@ -622,27 +535,20 @@ export default function OEEPage() {
       return filtered.reduce((sum, r) => sum + (r.oee ?? 0), 0) / filtered.length;
     }
     return 0;
-  }, [isToday, hasValidWebSocketOee, sim.oee, oeeApiData, oeeApiFallback, filterShop, filterLine]);
+  }, [isToday, hasValidWebSocketOee, oeeState, oeeApiData, oeeApiFallback, filterShop, filterLine]);
 
-  // Diff time (minutes): production_time - takt_time * cars_production
   const difftime = React.useMemo(() => {
-    // For today: prefer WebSocket, fallback to API
     if (isToday) {
-      // Try WebSocket data first
-      if (hasValidWebSocketOee && sim.oee) {
-        const oeeData = sim.oee.data;
-        if (Array.isArray(oeeData)) {
-          const filtered = oeeData.filter((r: OEERecord) => {
-            if (filterShop && r.shop !== filterShop) return false;
-            if (filterLine && r.line !== filterLine) return false;
-            return true;
-          });
-          if (filtered.length > 0) {
-            return filtered.reduce((sum: number, r: OEERecord) => sum + getDiffTimeMinutes(r), 0) / filtered.length;
-          }
+      if (hasValidWebSocketOee) {
+        const filtered = oeeState.filter((r) => {
+          if (filterShop && r.shop !== filterShop) return false;
+          if (filterLine && r.line !== `${filterShop}-${filterLine}`) return false;
+          return true;
+        });
+        if (filtered.length > 0) {
+          return filtered.reduce((sum, r) => sum + r.diffTime, 0) / filtered.length;
         }
       }
-      // Fallback to API data for today
       if (oeeApiFallback.length > 0) {
         const filtered = oeeApiFallback.filter((r) => {
           if (filterShop && r.shop !== filterShop) return false;
@@ -655,8 +561,6 @@ export default function OEEPage() {
       }
       return 0;
     }
-
-    // Historical: use API data
     const filtered = oeeApiData.filter((r) => {
       if (filterShop && r.shop !== filterShop) return false;
       if (filterLine && r.line !== filterLine) return false;
@@ -666,79 +570,80 @@ export default function OEEPage() {
       return filtered.reduce((sum, r) => sum + getDiffTimeMinutes(r), 0) / filtered.length;
     }
     return 0;
-  }, [isToday, hasValidWebSocketOee, sim.oee, oeeApiData, oeeApiFallback, filterShop, filterLine]);
+  }, [isToday, hasValidWebSocketOee, oeeState, oeeApiData, oeeApiFallback, filterShop, filterLine]);
 
-  // JPH (Jobs per Hour) Real = carsProduction / elapsedHours
-  // elapsedHours = (simulatorTimestamp - 07:00 of same day) in hours
-  // Uses UTC methods to avoid timezone inconsistencies across different servers
-  const jphReal = React.useMemo(() => {
-    if (!filterDate) return 0;
-
-    // 1) Tempo decorrido (usando UTC para consistência)
-    let elapsedHours = 0;
+  const carsProduced = React.useMemo(() => {
     if (isToday) {
-      if (!simNowMs) return 0;
-      const start = new Date(simNowMs);
-
-      // Set to 7:00 AM in simulator timezone (UTC-3) = 10:00 AM UTC
-      start.setUTCHours(PRODUCTION_START_HOUR_LOCAL, 0, 0, 0);
-      const elapsedMs = simNowMs - start.getTime();
-      elapsedHours = elapsedMs > 0 ? elapsedMs / 3600000 : 0;
-      // clamp to the 07:00 -> 00:00 window
-
-      if (elapsedHours > 17) elapsedHours = 17;
-    } else {
-      // Historical: full production window is always 17 hours (07:00 -> 00:00)
-      elapsedHours = 17;
-    }
-
-    if (elapsedHours <= 0) return 0;
-
-    // 2) Fonte de dados: prefer WebSocket for today, fallback to API
-    let source: OEERecord[] = [];
-    if (isToday) {
-      if (hasValidWebSocketOee && Array.isArray(sim.oee?.data)) {
-        source = sim.oee!.data as OEERecord[];
-      } else if (oeeApiFallback.length > 0) {
-        source = oeeApiFallback;
+      if (hasValidWebSocketOee) {
+        const filtered = oeeState.filter((r) => {
+          if (filterShop && r.shop !== filterShop) return false;
+          if (filterLine && r.line !== `${filterShop}-${filterLine}`) return false;
+          return true;
+        });
+        if (filtered.length > 0) {
+          return filtered.reduce((sum, r) => sum + r.carsProduction, 0) / filtered.length;
+        }
       }
-    } else {
-      source = oeeApiData;
+      if (oeeApiFallback.length > 0) {
+        const filtered = oeeApiFallback.filter((r) => {
+          if (filterShop && r.shop !== filterShop) return false;
+          if (filterLine && r.line !== filterLine) return false;
+          return true;
+        });
+        if (filtered.length > 0) {
+          return filtered.reduce((sum, r) => sum + getCarsProduced(r), 0) / filtered.length;
+        }
+      }
+      return 0;
     }
 
-    // 3) Filtrar por shop/line
-    const filtered = source.filter((r: OEERecord) => {
+    const filtered = oeeApiData.filter((r) => {
       if (filterShop && r.shop !== filterShop) return false;
       if (filterLine && r.line !== filterLine) return false;
       return true;
     });
-    if (filtered.length === 0) return 0;
+    if (filtered.length > 0) {
+      return filtered.reduce((sum, r) => sum + getCarsProduced(r), 0) / filtered.length;
+    }
+    return 0;
+  }, [isToday, hasValidWebSocketOee, oeeState, oeeApiData, oeeApiFallback, filterShop, filterLine]);
 
-    // 4) Numerador: carsProduction
-    // - Se line está selecionada: soma da line
-    // - Se line = Todos: média por quantidade de linhas (shop selecionado ou planta toda)
-    const totalCars = filtered.reduce((sum: number, r: OEERecord) => sum + getCarsProduced(r), 0);
-
-    let carsValue = totalCars;
-    if (!filterLine) {
-      // Prefer the plant snapshot to count lines; fallback to distinct lines in the payload
-      let lineCount = 0;
-      if (filterShop) {
-        const shop = plant.shops.find((s) => s.name === filterShop);
-        lineCount = shop?.lines?.length ?? 0;
-      } else {
-        lineCount = plant.shops.reduce((acc, s) => acc + (s.lines?.length ?? 0), 0);
+  const jphReal = React.useMemo(() => {
+    if (isToday) {
+      if (hasValidWebSocketOee) {
+        const filtered = oeeState.filter((r) => {
+          if (filterShop && r.shop !== filterShop) return false;
+          if (filterLine && r.line !== `${filterShop}-${filterLine}`) return false;
+          return true;
+        });
+        if (filtered.length > 0) {
+          return filtered.reduce((sum, r) => sum + r.jph, 0) / filtered.length;
+        }
       }
-
-      if (!lineCount) lineCount = countDistinctLines(filtered);
-      if (lineCount > 0) carsValue = totalCars / lineCount;
+      if (oeeApiFallback.length > 0) {
+        const filtered = oeeApiFallback.filter((r) => {
+          if (filterShop && r.shop !== filterShop) return false;
+          if (filterLine && r.line !== `${filterShop}-${filterLine}`) return false;
+          return true;
+        });
+        if (filtered.length > 0) {
+          return filtered.reduce((sum, r) => sum + getJPH(r), 0) / filtered.length;
+        }
+      }
+      return 0;
     }
 
+    const filtered = oeeApiData.filter((r) => {
+      if (filterShop && r.shop !== filterShop) return false;
+      if (filterLine && r.line !== `${filterShop}-${filterLine}`) return false;
+      return true;
+    });
+    if (filtered.length > 0) {
+      return filtered.reduce((sum, r) => sum + getJPH(r), 0) / filtered.length;
+    }
+    return 0;
+  }, [isToday, hasValidWebSocketOee, oeeState, oeeApiData, oeeApiFallback, filterShop, filterLine]);
 
-    return carsValue / elapsedHours;
-  }, [filterDate, isToday, simNowMs, hasValidWebSocketOee, sim.oee, oeeApiData, oeeApiFallback, filterShop, filterLine, plant.shops]);
-
-  // Last 7 days bar data
   const last7Days = React.useMemo(() => {
     if (!simNowMs) return [] as { label: string; value: number }[];
     const dates: string[] = [];
@@ -760,11 +665,9 @@ export default function OEEPage() {
     });
   }, [oeeHistorical, filterShop, filterLine, simNowMs]);
 
-  // Hour slots for timeline
   const hourSlots = React.useMemo((): HourSlot[] => {
     const dateStart = new Date(filterDate + 'T07:00:00').getTime();
 
-    // Filter stops by shop/line first
     const filteredByShopLine = stops.filter((s) => {
       if (filterShop && getField(s, 'shop') !== filterShop) return false;
       if (filterLine && getField(s, 'line') !== filterLine) return false;
@@ -776,13 +679,11 @@ export default function OEEPage() {
       const hourEnd = hourStart + 3600000;
 
       const overlapping = filteredByShopLine.filter((s) => {
-        // Add offset to convert stop timestamps from UTC+0 to simulator timezone
         const st = getStartTime(s) + STOPS_UTC_OFFSET_MS;
-        const et = (getEndTime(s) || getStartTime(s) + 60000) + STOPS_UTC_OFFSET_MS; // default 1 min if no end
+        const et = (getEndTime(s) || getStartTime(s) + 60000) + STOPS_UTC_OFFSET_MS;
         return st < hourEnd && et > hourStart;
       });
 
-      // Calculate stopped minutes within this hour
       let stoppedMs = 0;
       for (const s of overlapping) {
         const st = Math.max(getStartTime(s) + STOPS_UTC_OFFSET_MS, hourStart);
@@ -807,14 +708,12 @@ export default function OEEPage() {
 
       return { hour, type, stops: overlapping, stoppedMinutes };
     });
-  }, [filterDate, stops, filterShop, filterLine]);
+  }, [filterDate, stops, filterShop, filterLine, STOPS_UTC_OFFSET_MS]);
 
-  // Minute slots for detailed timeline (07:00 to 00:00 = 1020 minutes)
   const minuteSlots = React.useMemo((): MinuteSlot[] => {
     const dateStart = new Date(filterDate + 'T07:00:00').getTime();
     const slots: MinuteSlot[] = [];
 
-    // Filter stops by shop/line first
     const filteredByShopLine = stops.filter((s) => {
       if (filterShop && getField(s, 'shop') !== filterShop) return false;
       if (filterLine && getField(s, 'line') !== filterLine) return false;
@@ -826,7 +725,6 @@ export default function OEEPage() {
       const minuteEnd = minuteStart + 60000;
 
       const overlapping = filteredByShopLine.filter((s) => {
-        // Add offset to convert stop timestamps from UTC+0 to simulator timezone
         const st = getStartTime(s) + STOPS_UTC_OFFSET_MS;
         const et = (getEndTime(s) || getStartTime(s) + 60000) + STOPS_UTC_OFFSET_MS;
         return st < minuteEnd && et > minuteStart;
@@ -850,9 +748,8 @@ export default function OEEPage() {
     }
 
     return slots;
-  }, [filterDate, stops, filterShop, filterLine]);
+  }, [filterDate, stops, filterShop, filterLine, STOPS_UTC_OFFSET_MS]);
 
-  // Filtered stops for list
   const filteredStops = React.useMemo(() => {
     return stops
       .filter((s) => {
@@ -870,7 +767,8 @@ export default function OEEPage() {
     return filteredStops.slice(start, start + rowsPerPage);
   }, [filteredStops, page]);
 
-  const [selection, setSelection] = React.useState<Stop | null>(null);
+
+  const [selection, setSelection] = React.useState<IStopLine | null>(null);
 
   React.useEffect(() => {
     setPage(0);
@@ -984,15 +882,18 @@ export default function OEEPage() {
         <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr' } }}>
           {/* Row 1: OEE Pie + Bar Chart */}
           <Paper sx={{ p: 2 }}>
-            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center' }}>
               <Box sx={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>
                   OEE Atual
                 </Typography>
-                {oeeLoading ? <CircularProgress size={80} /> : <PieChart value={currentOee} />}
+                {oeeLoading ? <CircularProgress size={70} /> : <PieChart value={currentOee} />}
               </Box>
               <Box sx={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', marginLeft: 4, marginRight: 4 }}>
                 <MetricCard label="JPH Real" value={jphReal} unit="carros/h" />
+              </Box>
+              <Box sx={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center'}}>
+                <MetricCard label="Carros Produzidos" value={carsProduced} unit="carros" />
               </Box>
               <Box sx={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', marginLeft: 4, marginRight: 4 }}>
                 <MetricCard label="Tempo de Justiicativa" value={difftime} unit="minutos" />
@@ -1074,6 +975,7 @@ export default function OEEPage() {
                     </TableHead>
                     <TableBody>
                       {pagedStops.map((s, idx) => (
+
                         <TableRow
                           hover
                           key={`${s.id ?? idx}-${getStartTime(s)}`}
@@ -1085,8 +987,8 @@ export default function OEEPage() {
                           <TableCell>{getField(s, 'station') || '--'}</TableCell>
                           <TableCell>{getField(s, 'type') || '--'}</TableCell>
                           <TableCell>{getField(s, 'reason') || '--'}</TableCell>
-                          <TableCell>{getStartTime(s) ? formatEpochMs(getStartTime(s)) : '--'}</TableCell>
-                          <TableCell>{getEndTime(s) ? formatEpochMs(getEndTime(s)) : '--'}</TableCell>
+                          <TableCell>{formatEpochMs(getStartTime(s)) ?? '--'}</TableCell>
+                          <TableCell>{formatEpochMs(getEndTime(s)) ?? '--'}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

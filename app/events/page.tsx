@@ -98,7 +98,7 @@ export default function EventsPage() {
       setError(null);
       const res = await http.get('/events');
       setEvents(asArrayFromPayload<EventRow>(res.data));
-    } catch (e) {
+    } catch {
       setError('Falha ao carregar os eventos. Verifique a conexão com a API.');
     } finally {
       setLoading(false);
@@ -175,10 +175,13 @@ export default function EventsPage() {
 
       <Box sx={{ px: { xs: 1.5, sm: 3 }, pb: 3, mt: 3 }}>
         <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-          <Typography variant="h6" sx={{ fontWeight: 800 }}>
-            Events
-          </Typography>
-          {/* Regra 1: Consistência - Contador de resultados */}
+          <Stack direction="row" alignItems="center" gap={2}>
+            <Typography variant="h6" sx={{ fontWeight: 800 }}>
+              Events
+            </Typography>
+            <Chip label="API" size="small" variant="outlined" color="info" />
+          </Stack>
+          {/* Regra 1: Consistencia - Contador de resultados */}
           <ResultsCount total={events.length} filtered={filtered.length} label="eventos" />
         </Stack>
 

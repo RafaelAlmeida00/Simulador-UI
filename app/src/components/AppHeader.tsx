@@ -26,23 +26,24 @@ import { animated, useSpring } from '@react-spring/web';
 import { useRouter } from 'next/navigation';
 
 import { useColorMode } from '../providers/ColorModeProvider';
-import { useSimulatorStore } from '../hooks/useSimulatorStore';
 import { getSocket } from '../utils/socket';
+import { useSimulatorSelector } from '../hooks/useSimulatorStore';
 
 export function AppHeader() {
   const [open, setOpen] = React.useState(false);
   const theme = useTheme();
   const { mode, toggleMode } = useColorMode();
   const router = useRouter();
+  const [simulatorStatusvar, setSimulatorStatus] = React.useState('');
+  const simulatorStatus = useSimulatorSelector(s => s.health?.data?.simulatorStatus ?? '');
 
-  // Subscribe to health via WebSocket store
-  const sim = useSimulatorStore();
-  const simulatorStatus = sim.health?.data?.simulatorStatus ?? '';
+
 
   // Ensure socket is initialized (subscribes to health on connect)
   React.useEffect(() => {
     getSocket();
-  }, []);
+    setSimulatorStatus(simulatorStatus);
+  }, [simulatorStatus]);
 
   // Control handlers
   const handleStart = () => {
@@ -82,7 +83,7 @@ export function AppHeader() {
 
           <Stack direction="row" spacing={1} alignItems="center">
             {/* Start: appears if status != 'running' */}
-            {simulatorStatus !== 'running' && (
+            {simulatorStatusvar !== 'running' && (
               <Button
                 size="small"
                 variant="contained"
@@ -108,7 +109,7 @@ export function AppHeader() {
             )}
 
             {/* Stop: appears if status != 'stopped' */}
-            {simulatorStatus !== 'stopped' && (
+            {simulatorStatusvar !== 'stopped' && (
               <Button
                 size="small"
                 variant="contained"
@@ -121,7 +122,7 @@ export function AppHeader() {
             )}
 
             {/* Restart: appears if status != 'stopped' */}
-            {simulatorStatus !== 'stopped' && (
+            {simulatorStatusvar !== 'stopped' && (
               <Button
                 size="small"
                 variant="outlined"
@@ -173,7 +174,7 @@ export function AppHeader() {
               { label: 'Buffers', href: '/buffers' },
               { label: 'Settings', href: '/settings' },
               { label: 'Health Simulator', href: '/health-simulator' },
-              
+
 
             ].map((item) => (
               <ListItemButton
