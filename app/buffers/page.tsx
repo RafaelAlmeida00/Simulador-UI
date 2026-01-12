@@ -96,7 +96,7 @@ export default function BuffersPage() {
               <List
                 rowCount={buffers.length}
                 rowHeight={rowHeight}
-                rowComponent={BufferCardVirtual}
+                rowComponent={(props) => <BufferCardVirtual {...props} />}
                 rowProps={{
                   buffers,
                   onBufferClick: handleBufferClick,
