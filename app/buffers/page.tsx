@@ -9,13 +9,18 @@ import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { AppHeader } from '../src/components/AppHeader';
-import { BufferCardVirtual } from '../src/components/BufferCardVirtual';
 import { DetailsDrawer } from '../src/components/DetailsDrawer';
 import { LoadingState, EmptyState, ConnectionStatus } from '../src/components/FeedbackStates';
 import { getSocket, reconnectSocket } from '../src/utils/socket';
 import { useSimulatorSelector } from '../src/hooks/useSimulatorStore';
 import { useDynamicBufferList } from '../src/hooks/useDynamicBufferList';
 import type { IBuffer, ICar } from '../src/types/socket';
+import dynamic from "next/dynamic";
+
+// Dynamically import the component and disable server-side rendering
+const BufferCardVirtual = dynamic(() => import("../src/components/BufferCardVirtual").then(mod => mod.BufferCardVirtual), {
+  ssr: false,
+});
 
 type DetailSelection =
   | { kind: 'buffer'; title: string; data: unknown }
