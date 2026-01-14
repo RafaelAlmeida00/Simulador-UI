@@ -1,4 +1,4 @@
-import axios, { AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
+import axios, { AxiosError, InternalAxiosRequestConfig, AxiosResponse, AxiosHeaders } from 'axios';
 import { getRuntimeEnv } from './runtimeEnv';
 
 /**
@@ -26,6 +26,7 @@ function getRequestKey(config: InternalAxiosRequestConfig): string {
 interface RetryConfig extends InternalAxiosRequestConfig {
   __retryCount?: number;
   __requestKey?: string;
+  __pendingPromise?: Promise<AxiosResponse>;
 }
 
 // Create axios instance with base configuration
@@ -56,7 +57,7 @@ http.interceptors.request.use(
         config.signal = controller.signal;
 
         // Attach the pending promise to be returned by the response interceptor
-        (config as any).__pendingPromise = pending;
+        config.__pendingPromise = pending;
       }
     }
     return config;
@@ -80,8 +81,8 @@ http.interceptors.response.use(
     const config = error.config as RetryConfig | undefined;
 
     // If request was cancelled due to deduplication, return the pending promise
-    if (axios.isCancel(error) && (config as any)?.__pendingPromise) {
-      return (config as any).__pendingPromise;
+    if (axios.isCancel(error) && config?.__pendingPromise) {
+      return config.__pendingPromise;
     }
 
     if (!config) {
@@ -137,6 +138,7 @@ export function deduplicatedGet<T = unknown>(
     ...config,
     url,
     method: 'get',
+    headers: config?.headers ?? new AxiosHeaders(),
   };
 
   const key = getRequestKey(requestConfig as InternalAxiosRequestConfig);
