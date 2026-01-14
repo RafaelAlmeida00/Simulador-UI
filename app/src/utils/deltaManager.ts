@@ -780,7 +780,7 @@ export function applyOEEDelta(
     const rawData = message.data;
     const data: OEEDataEmit[] = Array.isArray(rawData)
       ? rawData
-      : (rawData as FlatArrayDelta<OEEDataEmit>).items ?? [];
+      : (rawData as { items?: OEEDataEmit[] }).items ?? [];
     for (const item of data) {
       if (item) {
         oeeCache.data.set(createOEEId(item), item);
@@ -853,7 +853,7 @@ export function applyMTTRMTBFDelta(
     const rawData = message.data;
     const data: MTTRMTBFData[] = Array.isArray(rawData)
       ? rawData
-      : (rawData as FlatArrayDelta<MTTRMTBFData>).items ?? [];
+      : (rawData as { items?: MTTRMTBFData[] }).items ?? [];
     for (const item of data) {
       if (item) {
         mttrMtbfCache.data.set(createMTTRMTBFId(item), item);
