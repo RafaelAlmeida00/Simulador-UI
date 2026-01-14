@@ -1,8 +1,23 @@
 // util/socket.ts
 import { io, Socket } from 'socket.io-client';
+import customParser from 'socket.io-msgpack-parser';
 import { throttle, DebouncedFunc } from 'lodash-es';
 import { simulatorStore } from '../stores/simulatorStore';
 import { getRuntimeEnv } from './runtimeEnv';
+import type { OptimizedSocketMessage, AckPayload } from '../types/delta';
+import type { PlantSnapshot, IStopLine, IBuffer, ICar, OEEDataEmit, MTTRMTBFData } from '../types/socket';
+import {
+  handleChunkedMessage,
+  applyPlantStateDelta,
+  applyStopsDelta,
+  applyBuffersDelta,
+  applyCarsDelta,
+  applyOEEDelta,
+  applyMTTRMTBFDelta,
+  convertCachedToSnapshot,
+  resetAllCaches,
+  getCacheVersions,
+} from './deltaManager';
 
 let socket: Socket | null = null;
 
@@ -58,23 +73,306 @@ export type CommandPayload = {
   payload?: Record<string, unknown>;
 };
 
+/**
+ * Checks if a payload is an OptimizedSocketMessage (delta protocol)
+ */
+function isOptimizedMessage(payload: unknown): payload is OptimizedSocketMessage {
+  if (typeof payload !== 'object' || payload === null) return false;
+  const msg = payload as Record<string, unknown>;
+  return (
+    (msg.type === 'FULL' || msg.type === 'DELTA') &&
+    typeof msg.channel === 'string' &&
+    typeof msg.version === 'number'
+  );
+}
+
+/**
+ * Sends ACK for backpressure control
+ */
+function sendAck(s: Socket, channel: string, version: number): void {
+  const ack: AckPayload = { channel, version };
+  s.emit('ack', ack);
+}
+
+/**
+ * Requests full state when version mismatch occurs
+ */
+function requestFullState(s: Socket, channel: string): void {
+  console.log(`[socket] Requesting full state for channel: ${channel}`);
+  s.emit('requestFull', channel);
+}
+
+/**
+ * Handles delta protocol messages for plantstate channel
+ */
+function handlePlantStateMessage(s: Socket, message: OptimizedSocketMessage): void {
+  try {
+    // Handle chunked messages
+    if (message.chunkInfo) {
+      const reassembled = handleChunkedMessage(message);
+      if (!reassembled) return; // Waiting for more chunks
+      message = reassembled;
+    }
+
+    const cachedState = applyPlantStateDelta(message as OptimizedSocketMessage<PlantSnapshot>);
+    const snapshot = convertCachedToSnapshot(cachedState);
+
+    simulatorStore.setPlantState({
+      type: 'PLANT_STATE',
+      data: snapshot,
+      timestamp: snapshot.timestamp,
+    });
+
+    if (message.requiresAck) {
+      sendAck(s, message.channel, message.version);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === 'VERSION_MISMATCH') {
+      requestFullState(s, message.channel);
+    } else if (error instanceof Error && error.message === 'NO_CACHED_STATE') {
+      requestFullState(s, message.channel);
+    } else {
+      console.error('[socket] Error handling plantstate message:', error);
+    }
+  }
+}
+
+/**
+ * Handles delta protocol messages for stops channel
+ */
+function handleStopsMessage(s: Socket, message: OptimizedSocketMessage): void {
+  try {
+    if (message.chunkInfo) {
+      const reassembled = handleChunkedMessage(message);
+      if (!reassembled) return;
+      message = reassembled;
+    }
+
+    const stops = applyStopsDelta(message as OptimizedSocketMessage<IStopLine[]>);
+
+    simulatorStore.setStopsFromDelta(stops);
+
+    if (message.requiresAck) {
+      sendAck(s, message.channel, message.version);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === 'VERSION_MISMATCH') {
+      requestFullState(s, message.channel);
+    } else {
+      console.error('[socket] Error handling stops message:', error);
+    }
+  }
+}
+
+/**
+ * Handles delta protocol messages for buffers channel
+ */
+function handleBuffersMessage(s: Socket, message: OptimizedSocketMessage): void {
+  try {
+    if (message.chunkInfo) {
+      const reassembled = handleChunkedMessage(message);
+      if (!reassembled) return;
+      message = reassembled;
+    }
+
+    const buffers = applyBuffersDelta(message as OptimizedSocketMessage<IBuffer[]>);
+
+    simulatorStore.setBuffersFromDelta(buffers);
+
+    if (message.requiresAck) {
+      sendAck(s, message.channel, message.version);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === 'VERSION_MISMATCH') {
+      requestFullState(s, message.channel);
+    } else {
+      console.error('[socket] Error handling buffers message:', error);
+    }
+  }
+}
+
+/**
+ * Handles delta protocol messages for cars channel
+ */
+function handleCarsMessage(s: Socket, message: OptimizedSocketMessage): void {
+  try {
+    if (message.chunkInfo) {
+      const reassembled = handleChunkedMessage(message);
+      if (!reassembled) return;
+      message = reassembled;
+    }
+
+    const cars = applyCarsDelta(message as OptimizedSocketMessage<ICar[]>);
+
+    simulatorStore.setCarsFromDelta(cars);
+
+    if (message.requiresAck) {
+      sendAck(s, message.channel, message.version);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === 'VERSION_MISMATCH') {
+      requestFullState(s, message.channel);
+    } else {
+      console.error('[socket] Error handling cars message:', error);
+    }
+  }
+}
+
+/**
+ * Handles delta protocol messages for OEE channel
+ */
+function handleOEEMessage(s: Socket, message: OptimizedSocketMessage): void {
+  try {
+    if (message.chunkInfo) {
+      const reassembled = handleChunkedMessage(message);
+      if (!reassembled) return;
+      message = reassembled;
+    }
+
+    const oeeData = applyOEEDelta(message as OptimizedSocketMessage<OEEDataEmit[]>);
+
+    simulatorStore.setOEEFromDelta(oeeData);
+
+    if (message.requiresAck) {
+      sendAck(s, message.channel, message.version);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === 'VERSION_MISMATCH') {
+      requestFullState(s, message.channel);
+    } else {
+      console.error('[socket] Error handling OEE message:', error);
+    }
+  }
+}
+
+/**
+ * Handles delta protocol messages for MTTR/MTBF channel
+ */
+function handleMTTRMTBFMessage(s: Socket, message: OptimizedSocketMessage): void {
+  try {
+    if (message.chunkInfo) {
+      const reassembled = handleChunkedMessage(message);
+      if (!reassembled) return;
+      message = reassembled;
+    }
+
+    const mttrMtbfData = applyMTTRMTBFDelta(message as OptimizedSocketMessage<MTTRMTBFData[]>);
+
+    simulatorStore.setMTTRMTBFFromDelta(mttrMtbfData);
+
+    if (message.requiresAck) {
+      sendAck(s, message.channel, message.version);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === 'VERSION_MISMATCH') {
+      requestFullState(s, message.channel);
+    } else {
+      console.error('[socket] Error handling MTTR/MTBF message:', error);
+    }
+  }
+}
+
+/**
+ * Creates a message handler that supports both legacy and delta protocols
+ */
+function createDeltaAwareHandler(
+  channel: string,
+  deltaHandler: (s: Socket, message: OptimizedSocketMessage) => void,
+  legacyHandler: (payload: unknown) => void
+): (payload: unknown) => void {
+  return (payload: unknown) => {
+    const s = socket;
+    if (!s) return;
+
+    if (isOptimizedMessage(payload)) {
+      deltaHandler(s, payload);
+    } else {
+      // Legacy format - pass directly to store
+      legacyHandler(payload);
+    }
+  };
+}
+
+/**
+ * Retorna explicação legível para cada razão de desconexão
+ */
+function getDisconnectExplanation(reason: string): string {
+  const explanations: Record<string, string> = {
+    'io server disconnect': 'O SERVIDOR fechou a conexão intencionalmente (chamou socket.disconnect())',
+    'io client disconnect': 'O CLIENTE fechou a conexão intencionalmente (chamou socket.disconnect())',
+    'transport close': 'A conexão foi perdida (servidor caiu, reiniciou, ou problema de rede)',
+    'transport error': 'Erro no transporte WebSocket (problema de rede ou servidor)',
+    'ping timeout': 'Servidor não respondeu ao ping dentro do timeout (servidor travou ou rede lenta)',
+    'parse error': 'Servidor enviou pacote inválido/corrompido',
+  };
+  return explanations[reason] || 'Razão desconhecida';
+}
+
 function createSocket(): Socket {
   const { socketUrl } = getRuntimeEnv();
+
+
   const s = io(socketUrl || undefined, {
     transports: ['websocket'],
-    path: '/socket.io'
+    path: '/socket.io',
+    parser: customParser
   });
 
-  // Create throttled handlers for all channels
-  // Type casting is safe here as socket.io events are typed by the server
+
+  // Create delta-aware handlers for all channels
   const handlers = {
-    plantstate: createThrottledHandler('plantstate', (p) => simulatorStore.setPlantState(p as Parameters<typeof simulatorStore.setPlantState>[0])),
-    stops: createThrottledHandler('stops', (p) => simulatorStore.setStops(p as Parameters<typeof simulatorStore.setStops>[0])),
-    buffers: createThrottledHandler('buffers', (p) => simulatorStore.setBuffers(p as Parameters<typeof simulatorStore.setBuffers>[0])),
-    health: createThrottledHandler('health', (p) => simulatorStore.setHealth(p as Parameters<typeof simulatorStore.setHealth>[0])),
-    cars: createThrottledHandler('cars', (p) => simulatorStore.setCars(p as Parameters<typeof simulatorStore.setCars>[0])),
-    oee: createThrottledHandler('oee', (p) => simulatorStore.setOEE(p as Parameters<typeof simulatorStore.setOEE>[0])),
-    mttr_mtbf: createThrottledHandler('mttr_mtbf', (p) => simulatorStore.setMTTRMTBF(p as Parameters<typeof simulatorStore.setMTTRMTBF>[0])),
+    plantstate: createThrottledHandler(
+      'plantstate',
+      createDeltaAwareHandler(
+        'plantstate',
+        handlePlantStateMessage,
+        (p) => simulatorStore.setPlantState(p as Parameters<typeof simulatorStore.setPlantState>[0])
+      )
+    ),
+    stops: createThrottledHandler(
+      'stops',
+      createDeltaAwareHandler(
+        'stops',
+        handleStopsMessage,
+        (p) => simulatorStore.setStops(p as Parameters<typeof simulatorStore.setStops>[0])
+      )
+    ),
+    buffers: createThrottledHandler(
+      'buffers',
+      createDeltaAwareHandler(
+        'buffers',
+        handleBuffersMessage,
+        (p) => simulatorStore.setBuffers(p as Parameters<typeof simulatorStore.setBuffers>[0])
+      )
+    ),
+    health: createThrottledHandler('health', (p) => {
+      // Health doesn't use delta protocol
+      simulatorStore.setHealth(p as Parameters<typeof simulatorStore.setHealth>[0]);
+    }),
+    cars: createThrottledHandler(
+      'cars',
+      createDeltaAwareHandler(
+        'cars',
+        handleCarsMessage,
+        (p) => simulatorStore.setCars(p as Parameters<typeof simulatorStore.setCars>[0])
+      )
+    ),
+    oee: createThrottledHandler(
+      'oee',
+      createDeltaAwareHandler(
+        'oee',
+        handleOEEMessage,
+        (p) => simulatorStore.setOEE(p as Parameters<typeof simulatorStore.setOEE>[0])
+      )
+    ),
+    mttr_mtbf: createThrottledHandler(
+      'mttr_mtbf',
+      createDeltaAwareHandler(
+        'mttr_mtbf',
+        handleMTTRMTBFMessage,
+        (p) => simulatorStore.setMTTRMTBF(p as Parameters<typeof simulatorStore.setMTTRMTBF>[0])
+      )
+    ),
   };
 
   // Store handlers for potential cleanup
@@ -82,19 +380,47 @@ function createSocket(): Socket {
     throttledHandlers.set(channel, handler);
   });
 
+  // ====== EVENTOS DE CONEXÃO ======
   s.on('connect', () => {
     simulatorStore.setConnected(true);
-    console.log('[socket] connected', { id: s.id });
+    // Reset caches on reconnect to ensure fresh state
+    resetAllCaches();
     ensureDefaultSubscriptions(s);
+  });
+
+  s.on('connect_error', (error) => {
+  });
+
+  s.io.on('reconnect_attempt', (attempt) => {
+  });
+
+  s.io.on('reconnect', (attempt) => {
+  });
+
+  s.io.on('reconnect_error', (error) => {
+  });
+
+  s.io.on('reconnect_failed', () => {
   });
 
   s.on('disconnect', (reason) => {
     simulatorStore.setConnected(false);
-    console.log('[socket] disconnected', reason);
 
     // Cancel pending throttled updates on disconnect
     throttledHandlers.forEach((handler) => handler.cancel());
+
+    // Reset caches on disconnect
+    resetAllCaches();
   });
+
+
+  // Handle chunk events for large payloads
+  s.on('plantstate:chunk', handlers.plantstate);
+  s.on('stops:chunk', handlers.stops);
+  s.on('buffers:chunk', handlers.buffers);
+  s.on('cars:chunk', handlers.cars);
+  s.on('oee:chunk', handlers.oee);
+  s.on('mttr_mtbf:chunk', handlers.mttr_mtbf);
 
   // Register all channel handlers with throttling
   s.on('plantstate', handlers.plantstate);
@@ -139,4 +465,15 @@ export function subscribeTo(...channels: string[]) {
 export function unsubscribeFrom(...channels: string[]) {
   const s = getSocket();
   channels.forEach(ch => s.emit('unsubscribe', ch));
+}
+
+// Request full state for a specific channel
+export function requestFullStateForChannel(channel: string): void {
+  const s = getSocket();
+  requestFullState(s, channel);
+}
+
+// Get current cache versions for debugging
+export function getSocketCacheVersions(): Record<string, number> {
+  return getCacheVersions();
 }

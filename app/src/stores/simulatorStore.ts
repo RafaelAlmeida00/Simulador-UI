@@ -246,6 +246,56 @@ export const simulatorStore = {
     state = { ...state, cars: payload, carsById };
     emitChange();
   },
+
+  // Delta-aware setters (receive already-processed data from deltaManager)
+  setStopsFromDelta(stops: IStopLine[]) {
+    state = {
+      ...state,
+      stops: { type: 'STOPS_STATE', data: stops },
+      stopsState: stops,
+    };
+    emitChange();
+  },
+
+  setBuffersFromDelta(buffers: IBuffer[]) {
+    state = {
+      ...state,
+      buffers: { type: 'BUFFERS_STATE', data: buffers },
+      buffersState: buffers,
+    };
+    emitChange();
+  },
+
+  setCarsFromDelta(cars: ICar[]) {
+    const carsById: Record<string, ICar> = {};
+    for (const car of cars) {
+      carsById[car.id] = car;
+    }
+    state = {
+      ...state,
+      cars: { type: 'CARS_STATE', data: cars },
+      carsById,
+    };
+    emitChange();
+  },
+
+  setOEEFromDelta(oeeData: OEEDataEmit[]) {
+    state = {
+      ...state,
+      oee: { type: 'OEE_UPDATE', data: oeeData },
+      oeeState: oeeData,
+    };
+    emitChange();
+  },
+
+  setMTTRMTBFFromDelta(mttrMtbfData: MTTRMTBFData[]) {
+    state = {
+      ...state,
+      mttrMtbf: { type: 'MTTR_MTBF_UPDATE', data: mttrMtbfData },
+      mttrMtbfState: mttrMtbfData,
+    };
+    emitChange();
+  },
 };
 
 // Helper: find stop for a specific station
