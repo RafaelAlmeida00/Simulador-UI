@@ -1,21 +1,28 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import { ColorModeProvider } from "./src/providers/ColorModeProvider";
-import { AppRouterCacheProvider } from "@mui/material-nextjs/v16-appRouter";
+import type { Metadata } from 'next';
+import { Geist, Geist_Mono } from 'next/font/google';
+import './globals.css';
+import { SessionProvider } from '@/src/components/providers';
+import { ThemeProvider } from '@/src/components/layout';
+import { Toaster } from '@/src/components/feedback';
 
 const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
+  variable: '--font-geist-sans',
+  subsets: ['latin'],
 });
 
 const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+  variable: '--font-geist-mono',
+  subsets: ['latin'],
 });
 
 export const metadata: Metadata = {
-  title: "Simulador UI",
-  description: "Simulador UI Plant Floor Monitoring Dashboard",
+  title: 'Plant Simulator',
+  description: 'Plant Floor Monitoring Dashboard',
+  openGraph: {
+    title: 'Plant Simulator',
+    description: 'Plant Floor Monitoring Dashboard',
+    type: 'website',
+  },
 };
 
 export default function RootLayout({
@@ -24,14 +31,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="pt-BR" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
       >
-        <script src="/runtime-env" />
-        <AppRouterCacheProvider>
-          <ColorModeProvider>{children}</ColorModeProvider>
-        </AppRouterCacheProvider>
+        <SessionProvider>
+          <ThemeProvider defaultTheme="dark" storageKey="plant-simulator-theme">
+            {children}
+            <Toaster />
+          </ThemeProvider>
+        </SessionProvider>
       </body>
     </html>
   );

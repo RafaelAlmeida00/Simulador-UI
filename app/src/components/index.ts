@@ -1,25 +1,19 @@
 // Re-export all components for easier imports
 
-export { AppHeader } from './AppHeader';
-export { DetailsDrawer } from './DetailsDrawer';
-export { MetricValue } from './MetricValue';
-export {
-  ConnectionStatus,
-  LoadingState,
-  ErrorState,
-  EmptyState,
-  LastUpdated,
-} from './FeedbackStates';
+// UI Components (shadcn/ui primitives)
+export * from './ui';
 
-// New reusable components
-export { StationCard } from './StationCard';
-export type { StationCardProps } from './StationCard';
+// Layout Components
+export * from './layout';
 
-export { BufferCard } from './BufferCard';
-export type { BufferCardProps } from './BufferCard';
+// Feedback Components
+export * from './feedback';
 
-export { ShopLineSelector } from './ShopLineSelector';
-export type { ShopLineSelectorProps } from './ShopLineSelector';
+// Charts Components
+export * from './charts';
 
-export { SimulatorTimeDisplay } from './SimulatorTimeDisplay';
-export type { SimulatorTimeDisplayProps } from './SimulatorTimeDisplay';
+// Data Display Components
+export * from './data-display';
+
+// Domain-Specific Components
+export * from './domain';
