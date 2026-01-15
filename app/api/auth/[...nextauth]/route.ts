@@ -21,8 +21,8 @@ function getProviderDisplayName(provider: string | null | undefined): string {
 const handler = NextAuth({
   providers: [
     Google({
-      clientId: process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_OAUTH_ID || '',
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET || process.env.NEXT_PUBLIC_GOOGLE_OAUTH_KEY || '',
+      clientId: process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PRIVATE_GOOGLE_OAUTH_ID || '',
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || process.env.NEXT_PRIVATE_GOOGLE_OAUTH_KEY || '',
     }),
     Credentials({
       name: 'credentials',

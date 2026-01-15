@@ -6,7 +6,7 @@ import { hash, compare } from 'bcryptjs';
 const D1_CONFIG = {
   accountId: process.env.CLOUDFLARE_ACCOUNT_ID || '',
   databaseId: process.env.CLOUDFLARE_D1_UUID || '805f0b5e-9c8a-4651-8eb9-f084b873eb22',
-  apiToken: process.env.CLOUDFLARE_D1_TOKEN || process.env.NEXT_PUBLIC_TOKEN_CLOUDFLARE || '',
+  apiToken: process.env.CLOUDFLARE_D1_TOKEN || process.env.NEXT_PRIVATE_TOKEN_CLOUDFLARE || '',
 };
 
 interface D1QueryResult<T> {

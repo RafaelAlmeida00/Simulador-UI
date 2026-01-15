@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 const D1_CONFIG = {
   accountId: process.env.CLOUDFLARE_ACCOUNT_ID || '',
   databaseId: process.env.CLOUDFLARE_D1_UUID || '',
-  apiToken: process.env.CLOUDFLARE_D1_TOKEN || process.env.NEXT_PUBLIC_TOKEN_CLOUDFLARE || '',
+  apiToken: process.env.CLOUDFLARE_D1_TOKEN || process.env.NEXT_PRIVATE_TOKEN_CLOUDFLARE || '',
 };
 
 async function executeQuery(sql: string) {

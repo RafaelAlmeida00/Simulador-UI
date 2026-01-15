@@ -4,8 +4,8 @@ export const dynamic = 'force-dynamic';
 
 export function GET() {
   const env = {
-    apiBaseUrl: process.env.NEXT_PUBLIC_API_BASE_URL ?? '',
-    socketUrl: process.env.NEXT_PUBLIC_SOCKET_URL ?? '',
+    apiBaseUrl: process.env.NEXT_PRIVATE_API_BASE_URL ?? '',
+    socketUrl: process.env.NEXT_PRIVATE_SOCKET_URL ?? '',
   };
 
   // Avoid `</script>` termination issues by escaping '<'

@@ -183,7 +183,7 @@ Este projeto utiliza um tema dark com vermelho como cor primaria, definido via C
 
 - Utilize **Axios** como biblioteca padrao para requisicoes HTTP no front-end.
 - Padronize o uso atraves do helper `app/src/utils/http.ts` (instancia unica `http`).
-- Configure o endpoint via `NEXT_PUBLIC_API_BASE_URL` quando aplicavel.
+- Configure o endpoint via `NEXT_PRIVATE_API_BASE_URL` quando aplicavel.
 
 ```typescript
 import http from '@/src/utils/http';
@@ -611,7 +611,7 @@ let socket: Socket | null = null;
 
 export function getSocket(): Socket {
   if (!socket) {
-    socket = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001');
+    socket = io(process.env.NEXT_PRIVATE_SOCKET_URL || 'http://localhost:3001');
   }
   return socket;
 }
@@ -1290,7 +1290,7 @@ function getRequestKey(config: InternalAxiosRequestConfig): string {
 }
 
 export const http = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_BASE_URL,
+  baseURL: process.env.NEXT_PRIVATE_API_BASE_URL,
   timeout: 10000,
 });
 
