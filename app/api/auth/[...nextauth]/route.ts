@@ -1,4 +1,5 @@
 import NextAuth from 'next-auth';
+import { skipCSRFCheck } from '@auth/core';
 import Credentials from 'next-auth/providers/credentials';
 import Google from 'next-auth/providers/google';
 import { getUserByEmail, createUser, verifyPassword } from '@/src/lib/auth';
@@ -19,6 +20,7 @@ function getProviderDisplayName(provider: string | null | undefined): string {
 }
 
 const handler = NextAuth({
+  skipCSRFCheck: skipCSRFCheck,
   providers: [
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PRIVATE_GOOGLE_OAUTH_ID || '',

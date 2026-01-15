@@ -28,10 +28,17 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Get session token
+  // Get session token - NextAuth v5 uses 'authjs.session-token' as cookie name
   const token = await getToken({
     req: request,
     secret: process.env.NEXTAUTH_SECRET,
+    cookieName: '__Secure-authjs.session-token',
+    salt: '__Secure-authjs.session-token',
+  }) || await getToken({
+    req: request,
+    secret: process.env.NEXTAUTH_SECRET,
+    cookieName: 'authjs.session-token',
+    salt: 'authjs.session-token',
   });
 
   const isAuthenticated = !!token;

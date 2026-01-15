@@ -32,18 +32,25 @@ function SignInContent() {
     setIsLoading(true);
 
     try {
-      const result = await signIn('credentials', {
-        email,
-        password,
-        redirect: false,
-        callbackUrl,
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email,
+          password,
+          callbackUrl,
+        }),
       });
 
-      if (result?.error) {
-        setFormError(result.error);
+      const data = await response.json();
+
+      if (!response.ok) {
+        setFormError(data.error || 'Erro ao fazer login');
         setIsLoading(false);
-      } else if (result?.ok) {
-        router.push(callbackUrl);
+      } else if (data.success) {
+        router.push(data.callbackUrl || callbackUrl);
       }
     } catch {
       setFormError('Erro ao fazer login. Tente novamente.');
