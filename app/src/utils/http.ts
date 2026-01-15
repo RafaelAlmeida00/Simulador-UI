@@ -1,28 +1,14 @@
 import axios, { AxiosError, InternalAxiosRequestConfig, AxiosResponse, AxiosHeaders } from 'axios';
 import { getRuntimeEnv } from './runtimeEnv';
+import { getAuthHeaders } from './authTokens';
 
-/**
- * Enhanced HTTP client with performance optimizations:
- * - Request deduplication for concurrent identical GET requests
- * - Exponential backoff retry for failed requests
- * - Timeout configuration
- * - Centralized error handling
- */
-
-// Request deduplication: cache for pending GET requests
 const pendingRequests = new Map<string, Promise<AxiosResponse>>();
 
-/**
- * Generate a unique key for a request based on method, URL, and params.
- */
 function getRequestKey(config: InternalAxiosRequestConfig): string {
   const params = config.params ? JSON.stringify(config.params) : '';
   return `${config.method?.toUpperCase()}:${config.url}:${params}`;
 }
 
-/**
- * Extended config type to track retry attempts
- */
 interface RetryConfig extends InternalAxiosRequestConfig {
   __retryCount?: number;
   __requestKey?: string;
@@ -32,31 +18,44 @@ interface RetryConfig extends InternalAxiosRequestConfig {
 // Create axios instance with base configuration
 export const http = axios.create({
   baseURL: getRuntimeEnv().apiBaseUrl || undefined,
-  timeout: 15000, // 15 second timeout
+  timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-/**
- * Request interceptor: Deduplication for GET requests
- * If an identical GET request is already in flight, return the same promise
- */
+// Auth interceptor - injects JWT and CSRF token in all requests
+http.interceptors.request.use(
+  async (config: RetryConfig) => {
+    // Get auth headers (JWT Bearer token + CSRF token)
+    const authHeaders = await getAuthHeaders();
+
+    // Merge auth headers with existing headers
+    if (authHeaders.Authorization) {
+      config.headers.set('Authorization', authHeaders.Authorization);
+    }
+    if (authHeaders['X-CSRF-Token']) {
+      config.headers.set('X-CSRF-Token', authHeaders['X-CSRF-Token']);
+    }
+
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+// Deduplication interceptor
 http.interceptors.request.use(
   (config: RetryConfig) => {
-    // Only deduplicate GET requests
     if (config.method?.toLowerCase() === 'get') {
       const key = getRequestKey(config);
       config.__requestKey = key;
 
       const pending = pendingRequests.get(key);
       if (pending) {
-        // Return a cancelled request - the original promise will be used
         const controller = new AbortController();
         controller.abort();
         config.signal = controller.signal;
 
-        // Attach the pending promise to be returned by the response interceptor
         config.__pendingPromise = pending;
       }
     }
@@ -65,12 +64,8 @@ http.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-/**
- * Response interceptor: Handle success, cleanup, and retry logic
- */
 http.interceptors.response.use(
   (response) => {
-    // Clean up pending request cache
     const key = (response.config as RetryConfig).__requestKey;
     if (key) {
       pendingRequests.delete(key);
@@ -80,7 +75,6 @@ http.interceptors.response.use(
   async (error: AxiosError) => {
     const config = error.config as RetryConfig | undefined;
 
-    // If request was cancelled due to deduplication, return the pending promise
     if (axios.isCancel(error) && config?.__pendingPromise) {
       return config.__pendingPromise;
     }
@@ -89,30 +83,25 @@ http.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // Clean up pending request cache on error
     const key = config.__requestKey;
     if (key) {
       pendingRequests.delete(key);
     }
 
-    // Retry configuration
     const MAX_RETRIES = 3;
     const retryCount = config.__retryCount || 0;
 
-    // Determine if we should retry
     const shouldRetry =
       retryCount < MAX_RETRIES &&
-      (!error.response || // Network error
-        error.response.status >= 500 || // Server error
-        error.response.status === 429); // Rate limited
+      (!error.response || //Network error
+        error.response.status >= 500 || //Server error
+        error.response.status === 429); //Rate limited
 
     if (shouldRetry) {
       config.__retryCount = retryCount + 1;
 
-      // Exponential backoff: 1s, 2s, 4s (capped at 10s)
       const delay = Math.min(1000 * Math.pow(2, retryCount), 10000);
 
-      // Add jitter to prevent thundering herd
       const jitter = Math.random() * 500;
 
       console.log(
@@ -127,9 +116,6 @@ http.interceptors.response.use(
   }
 );
 
-/**
- * Helper to create a GET request that participates in deduplication
- */
 export function deduplicatedGet<T = unknown>(
   url: string,
   config?: Omit<InternalAxiosRequestConfig, 'url' | 'method'>
@@ -143,17 +129,14 @@ export function deduplicatedGet<T = unknown>(
 
   const key = getRequestKey(requestConfig as InternalAxiosRequestConfig);
 
-  // Check if request is already pending
   const pending = pendingRequests.get(key);
   if (pending) {
     return pending as Promise<AxiosResponse<T>>;
   }
 
-  // Create new request and cache it
   const promise = http.get<T>(url, config);
   pendingRequests.set(key, promise);
 
-  // Clean up on completion
   promise.finally(() => {
     pendingRequests.delete(key);
   });

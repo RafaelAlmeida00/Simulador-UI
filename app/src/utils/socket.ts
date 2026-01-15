@@ -4,6 +4,7 @@ import customParser from 'socket.io-msgpack-parser';
 import { throttle, DebouncedFunc } from 'lodash-es';
 import { simulatorStore } from '../stores/simulatorStore';
 import { getRuntimeEnv } from './runtimeEnv';
+import { getAuthToken, getCsrfToken } from './authTokens';
 import type { OptimizedSocketMessage, AckPayload } from '../types/delta';
 import type { PlantSnapshot, IStopLine, IBuffer, ICar, OEEDataEmit, MTTRMTBFData } from '../types/socket';
 import {
@@ -293,30 +294,33 @@ function createDeltaAwareHandler(
   };
 }
 
-/**
- * Retorna explicação legível para cada razão de desconexão
- */
-function getDisconnectExplanation(reason: string): string {
-  const explanations: Record<string, string> = {
-    'io server disconnect': 'O SERVIDOR fechou a conexão intencionalmente (chamou socket.disconnect())',
-    'io client disconnect': 'O CLIENTE fechou a conexão intencionalmente (chamou socket.disconnect())',
-    'transport close': 'A conexão foi perdida (servidor caiu, reiniciou, ou problema de rede)',
-    'transport error': 'Erro no transporte WebSocket (problema de rede ou servidor)',
-    'ping timeout': 'Servidor não respondeu ao ping dentro do timeout (servidor travou ou rede lenta)',
-    'parse error': 'Servidor enviou pacote inválido/corrompido',
-  };
-  return explanations[reason] || 'Razão desconhecida';
-}
 
 function createSocket(): Socket {
   const { socketUrl } = getRuntimeEnv();
 
-
   const s = io(socketUrl || undefined, {
     transports: ['websocket'],
     path: '/socket.io',
-    parser: customParser
+    parser: customParser,
+    // Auth function is called on each connection/reconnection
+    auth: async (cb) => {
+      try {
+        const [token, csrfToken] = await Promise.all([
+          getAuthToken(),
+          getCsrfToken(),
+        ]);
+        cb({
+          token: token || undefined,
+          csrfToken: csrfToken || undefined,
+        });
+      } catch {
+        cb({});
+      }
+    },
+    // Also send as extraHeaders for middleware validation
+    extraHeaders: {},
   });
+
 
 
   // Create delta-aware handlers for all channels
@@ -388,22 +392,22 @@ function createSocket(): Socket {
     ensureDefaultSubscriptions(s);
   });
 
-  s.on('connect_error', (error) => {
+  s.on('connect_error', () => {
   });
 
-  s.io.on('reconnect_attempt', (attempt) => {
+  s.io.on('reconnect_attempt', () => {
   });
 
-  s.io.on('reconnect', (attempt) => {
+  s.io.on('reconnect', () => {
   });
 
-  s.io.on('reconnect_error', (error) => {
+  s.io.on('reconnect_error', () => {
   });
 
   s.io.on('reconnect_failed', () => {
   });
 
-  s.on('disconnect', (reason) => {
+  s.on('disconnect', () => {
     simulatorStore.setConnected(false);
 
     // Cancel pending throttled updates on disconnect

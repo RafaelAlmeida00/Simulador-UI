@@ -93,15 +93,12 @@ const filterFields = [
 ] as const;
 
 export default function EventsPage() {
-  // Local UI state
   const [filters, setFilters] = React.useState<Filters>(initialFilters);
   const [selection, setSelection] = React.useState<EventRow | null>(null);
 
-  // Pagination state
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(20);
 
-  // Build API filters from local filters
   const apiFilters: EventFilters = React.useMemo(() => {
     const f: EventFilters = {};
     if (filters.carId) f.car_id = filters.carId;
@@ -110,7 +107,6 @@ export default function EventsPage() {
     if (filters.line) f.line = filters.line;
     if (filters.station) f.station = filters.station;
 
-    // Convert date-time filters to timestamps
     const timeFrom = parseDateTimeLocal(filters.timeFrom);
     const timeTo = parseDateTimeLocal(filters.timeTo);
     if (timeFrom !== null) f.start_time = timeFrom;
@@ -119,7 +115,6 @@ export default function EventsPage() {
     return f;
   }, [filters]);
 
-  // React Query for data fetching with server-side pagination
   const {
     data: paginatedResult,
     isLoading,
@@ -132,10 +127,8 @@ export default function EventsPage() {
   const events = React.useMemo(() => paginatedResult?.data ?? [], [paginatedResult?.data]);
   const pagination = paginatedResult?.pagination;
 
-  // Derive loading state (initial load or background refetch)
   const loading = isLoading;
 
-  // Reset page when filters change
   React.useEffect(() => {
     setPage(1);
   }, [apiFilters]);
@@ -149,7 +142,6 @@ export default function EventsPage() {
   }, [filters]);
 
   const options = React.useMemo(() => {
-    // Cast events to EventRow for compatibility with helper functions
     const eventsAsRows = events as unknown as EventRow[];
     return {
       carId: uniq(eventsAsRows.map(getCarId)),
@@ -160,15 +152,12 @@ export default function EventsPage() {
     };
   }, [events]);
 
-  // With server-side pagination, data is already filtered by the API
-  // Just sort the data client-side
   const filtered = React.useMemo(() => {
     const eventsAsRows = events as unknown as EventRow[];
     const sorted = [...eventsAsRows].sort((a, b) => getTimestamp(b) - getTimestamp(a));
     return sorted;
   }, [events]);
 
-  // Stats calculation - uses current page data for calculations
   const stats = React.useMemo(() => {
     const typeCount: Record<string, number> = {};
     for (const e of filtered) {
@@ -187,7 +176,6 @@ export default function EventsPage() {
     };
   }, [filtered, pagination?.total]);
 
-  // Table columns - memoizado para evitar re-criação a cada render
   const columns = React.useMemo(() => [
     {
       key: 'carId',

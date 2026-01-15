@@ -2,6 +2,7 @@ import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import Google from 'next-auth/providers/google';
 import { getUserByEmail, createUser, verifyPassword } from '@/src/lib/auth';
+import { SignJWT } from 'jose';
 
 // Map provider IDs to user-friendly names
 const providerDisplayNames: Record<string, string> = {
@@ -90,12 +91,32 @@ const handler = NextAuth({
       if (account) {
         token.provider = account.provider;
       }
+
+      // Generate accessToken for external API authentication
+      if (!token.accessToken || Date.now() > (token.accessTokenExpires as number || 0)) {
+        const secret = new TextEncoder().encode(process.env.NEXTAUTH_SECRET);
+        const accessToken = await new SignJWT({
+          id: token.id,
+          email: token.email,
+          name: token.name,
+        })
+          .setProtectedHeader({ alg: 'HS256' })
+          .setIssuedAt()
+          .setExpirationTime('24h')
+          .sign(secret);
+
+        token.accessToken = accessToken;
+        token.accessTokenExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+      }
+
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
         (session.user as { id: string }).id = token.id as string;
       }
+      // Expose accessToken to the client
+      (session as { accessToken?: string }).accessToken = token.accessToken as string;
       return session;
     },
   },

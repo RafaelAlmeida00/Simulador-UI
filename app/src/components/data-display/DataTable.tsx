@@ -62,11 +62,8 @@ interface DataTableProps<T> {
   className?: string;
   onRowClick?: (row: T) => void;
   emptyMessage?: string;
-  /** Server-side pagination mode */
   serverPagination?: PaginationInfo;
-  /** Callback when page changes (for server-side pagination) */
   onPageChange?: (page: number) => void;
-  /** Callback when page size changes (for server-side pagination) */
   onPageSizeChange?: (pageSize: number) => void;
 }
 
