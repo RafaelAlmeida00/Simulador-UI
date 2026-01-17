@@ -107,10 +107,10 @@ function HourTimeline({ slots }: { slots: HourSlot[] }) {
   };
 
   return (
-    <div className="w-full">
-      <div className="flex gap-1 h-[140px]">
+    <div className="w-full overflow-hidden">
+      <div className="flex gap-0.5 h-[140px]">
         {data.map((d) => (
-          <div key={d.name} className="flex-1 flex flex-col items-center h-full">
+          <div key={d.name} className="flex-1 min-w-0 flex flex-col items-center h-full">
             <div className="flex-1 w-full flex flex-col justify-end">
               <motion.div
                 initial={{ height: 0 }}
@@ -120,7 +120,7 @@ function HourTimeline({ slots }: { slots: HourSlot[] }) {
                 style={{ backgroundColor: getColor(d.type) }}
               />
             </div>
-            <span className="text-[9px] text-muted-foreground mt-1">{d.name}</span>
+            <span className="text-[8px] text-muted-foreground mt-0.5 truncate w-full text-center">{d.name}</span>
           </div>
         ))}
       </div>

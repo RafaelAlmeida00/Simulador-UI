@@ -160,12 +160,17 @@ export const StationCard = React.memo(function StationCard({
             <div className="flex flex-col items-center gap-2">
               <div className="flex items-center gap-1 text-xs font-semibold">
                 <span>{carId}</span>
-                <span className="text-muted-foreground">•</span>
-                <span className="text-primary">{elapsedSec}s</span>
               </div>
 
               <div className="flex items-center gap-2">
-                {isOccupied && <Wrench className="h-4 w-4 text-warning" />}
+                {isOccupied && (
+                  <motion.div
+                    animate={{ rotate: [0, 15, 0, -15, 0] }}
+                    transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+                  >
+                    <Wrench className="h-4 w-4 text-warning" />
+                  </motion.div>
+                )}
 
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -180,7 +185,12 @@ export const StationCard = React.memo(function StationCard({
                         car?.inRework && !car?.hasDefect && 'text-warning'
                       )}
                     >
-                      <Car className="h-8 w-8" />
+                      <motion.div
+                        animate={{ x: [0, -1, 1, -1, 1, 0] }}
+                        transition={{ duration: 0.5, repeat: Infinity, repeatDelay: 1 }}
+                      >
+                        <Car className="h-8 w-8" />
+                      </motion.div>
                     </motion.button>
                   </TooltipTrigger>
                   <TooltipContent>
@@ -191,7 +201,14 @@ export const StationCard = React.memo(function StationCard({
                   </TooltipContent>
                 </Tooltip>
 
-                {isOccupied && <Wrench className="h-4 w-4 text-warning" />}
+                {isOccupied && (
+                  <motion.div
+                    animate={{ rotate: [0, -15, 0, 15, 0] }}
+                    transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+                  >
+                    <Wrench className="h-4 w-4 text-warning" />
+                  </motion.div>
+                )}
               </div>
 
               {car?.hasDefect && (

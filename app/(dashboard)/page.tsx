@@ -18,8 +18,9 @@ import {
   VirtualizedStationCards,
   DetailsDrawer,
 } from '@/src/components/domain';
-import { stopForStationByStartTime, simulatorStore } from '@/src/stores/simulatorStore';
+import { stopForStationByStartTime, simulatorStore, getOEEForLine } from '@/src/stores/simulatorStore';
 import type { IStopLine, IBuffer, ICar } from '@/src/types/socket';
+import { normalizePlantSnapshot } from '@/src/utils/plantNormalize';
 import type { NormalizedStation } from '@/src/utils/plantNormalize';
 import { useSimulatorSelector } from '@/src/hooks/useSimulatorStore';
 
@@ -57,7 +58,14 @@ export default function HomePage() {
   const simHealth = useSimulatorSelector((s) => s.health);
   const simConnect = useSimulatorSelector((s) => s.connected);
   const stopsState = useSimulatorSelector((s) => s.stopsState);
-  const shops = useSimulatorSelector((s) => s.getNormalizedPlant()?.shops ?? []);
+  const oeeState = useSimulatorSelector((s) => s.oeeState);
+  const plantState = useSimulatorSelector((s) => s.plantState);
+
+  // Normalize plantState locally to ensure re-render when plantState changes
+  const shops = React.useMemo(() => {
+    if (!plantState) return [];
+    return normalizePlantSnapshot(plantState)?.shops ?? [];
+  }, [plantState]);
 
   const [rawShopIndex, setShopIndex] = React.useState(0);
   const [rawLineIndex, setLineIndex] = React.useState(0);
@@ -106,15 +114,18 @@ export default function HomePage() {
     const totalStations = stations.length;
     const occupiedStations = stations.filter((s) => s.occupied).length;
     const stoppedStations = stations.filter((s) => s.isStopped).length;
-    const oee = totalStations > 0 ? ((totalStations - stoppedStations) / totalStations) * 100 : 0;
+
+    // Get OEE from socket
+    const oeeData = getOEEForLine(oeeState, currentShopName, `${currentShopName}-${currentLine?.name}`);
+    const oee = oeeData?.oee;
 
     return {
       totalStations,
       occupiedStations,
       stoppedStations,
-      oee: oee.toFixed(1),
+      oee: oee?.toFixed(1),
     };
-  }, [currentLine?.stations]);
+  }, [currentLine?.stations, currentLine?.name, oeeState, currentShopName]);
 
   const handleShopChange = React.useCallback((newShopIndex: number) => {
     setShopIndex(newShopIndex);

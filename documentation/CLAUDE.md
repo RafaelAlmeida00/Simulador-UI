@@ -1876,4 +1876,261 @@ Antes de considerar uma página otimizada:
 
 ---
 
+## 29. Seguranca - Security Hardening
+
+Esta secao documenta as medidas de seguranca implementadas no frontend.
+
+### 29.1 Arquivos de Seguranca
+
+```
+app/
+├── api/
+│   ├── auth/
+│   │   ├── [...nextauth]/route.ts  # NextAuth com lockout e revocation
+│   │   ├── login/route.ts          # Login com timing protection
+│   │   ├── csrf/route.ts           # CSRF token endpoint
+│   │   └── session/route.ts        # Session validation
+│   └── cors.ts                     # CORS helper module
+├── src/lib/
+│   ├── auth.ts                     # Auth functions + lockout helpers
+│   └── token-revocation.ts         # Token revocation module
+└── middleware.ts                   # Security headers (CSP)
+```
+
+### 29.2 Prevencao de User Enumeration
+
+**REGRA:** NUNCA usar mensagens de erro especificas que revelem se um usuario existe.
+
+```typescript
+// ERRADO - Revela que usuario existe
+if (!user) throw new Error('Usuario nao encontrado');
+if (!passwordMatch) throw new Error('Senha incorreta');
+
+// CORRETO - Mensagem generica para todos os casos
+const GENERIC_AUTH_ERROR = 'Credenciais invalidas';
+
+// Mesmo erro para: usuario nao existe, senha errada, conta bloqueada
+throw new Error(GENERIC_AUTH_ERROR);
+```
+
+### 29.3 Protecao Contra Timing Attacks
+
+**REGRA:** Sempre executar bcrypt.compare mesmo quando usuario nao existe.
+
+```typescript
+// app/src/lib/auth.ts
+const DUMMY_PASSWORD_HASH = '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.VTtYqV/mHvHLKi';
+
+export async function verifyPasswordSecure(
+  password: string,
+  hashedPassword: string | null
+): Promise<boolean> {
+  // Usa hash dummy se usuario nao existe - tempo de resposta igual
+  const hashToCompare = hashedPassword || DUMMY_PASSWORD_HASH;
+  return compare(password, hashToCompare);
+}
+
+// Garantir tempo minimo de resposta
+export async function ensureMinResponseTime(startTime: number): Promise<void> {
+  const elapsed = Date.now() - startTime;
+  const remainingDelay = Math.max(0, MIN_RESPONSE_TIME_MS - elapsed);
+  if (remainingDelay > 0) {
+    await new Promise(resolve => setTimeout(resolve, remainingDelay));
+  }
+}
+```
+
+### 29.4 Account Lockout (Brute Force Protection)
+
+**Configuracao:**
+- `MAX_FAILED_ATTEMPTS = 5` - Tentativas antes de bloquear
+- `LOCKOUT_DURATION_MINUTES = 15` - Duracao do bloqueio
+
+**Campos no D1:**
+```sql
+ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0;
+ALTER TABLE users ADD COLUMN locked_until INTEGER DEFAULT NULL;
+ALTER TABLE users ADD COLUMN last_login_at INTEGER DEFAULT NULL;
+```
+
+**Funcoes:**
+```typescript
+// Verificar se conta esta bloqueada
+export async function isAccountLocked(userId: string, lockedUntil: number | null): Promise<boolean>;
+
+// Incrementar tentativas falhas (bloqueia apos 5)
+export async function incrementFailedAttempts(userId: string, currentAttempts: number): Promise<void>;
+
+// Resetar tentativas apos login bem-sucedido
+export async function resetFailedAttempts(userId: string): Promise<void>;
+```
+
+### 29.5 Security Headers (CSP)
+
+**Implementado em:** `middleware.ts`
+
+```typescript
+function generateCSP(): string {
+  const directives = [
+    "default-src 'self'",
+    process.env.NODE_ENV === 'production'
+      ? "script-src 'self' 'unsafe-inline'"
+      : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self'",
+    "connect-src 'self' wss: ws: https:",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+  ];
+  return directives.join('; ');
+}
+
+function addSecurityHeaders(response: NextResponse): NextResponse {
+  response.headers.set('Content-Security-Policy', generateCSP());
+  response.headers.set('X-Frame-Options', 'DENY');
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('X-XSS-Protection', '1; mode=block');
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  if (process.env.NODE_ENV === 'production') {
+    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  return response;
+}
+```
+
+### 29.6 CORS Configuration
+
+**Arquivo:** `app/api/cors.ts`
+
+```typescript
+import { withCors, handleOptionsRequest } from '../cors';
+
+// Wrapper para API routes
+async function handler(request: NextRequest): Promise<NextResponse> {
+  return NextResponse.json({ data: 'example' });
+}
+
+export const GET = withCors(handler);
+export const OPTIONS = handleOptionsRequest;
+```
+
+**Funcoes disponiveis:**
+- `getAllowedOrigins()` - Lista de origins permitidos por ambiente
+- `isOriginAllowed(origin)` - Verifica se origin e permitido
+- `corsHeaders(request)` - Gera headers CORS
+- `withCors(handler)` - Wrapper para adicionar CORS a handlers
+- `handleOptionsRequest(request)` - Handler para preflight OPTIONS
+
+### 29.7 Token Revocation
+
+**Arquivo:** `app/src/lib/token-revocation.ts`
+
+**Funcoes:**
+```typescript
+// Revogar token especifico
+export async function revokeToken(
+  jti: string,
+  options?: { userId?: string; reason?: string; expiresAt?: Date }
+): Promise<void>;
+
+// Verificar se token foi revogado
+export async function isTokenRevoked(jti: string): Promise<boolean>;
+
+// Revogar todos os tokens de um usuario (force logout)
+export async function revokeAllUserTokens(userId: string, reason?: string): Promise<number>;
+```
+
+**Integracao com NextAuth:**
+```typescript
+// Em [...nextauth]/route.ts
+
+// JWT callback - adiciona JTI ao token
+async jwt({ token, user }) {
+  if (user) {
+    token.jti = crypto.randomUUID();
+  }
+  return token;
+}
+
+// Session callback - verifica revogacao
+async session({ session, token }) {
+  if (token.jti && await isTokenRevoked(token.jti as string)) {
+    return { expires: new Date(0).toISOString() } as typeof session;
+  }
+  return session;
+}
+
+// Event - revoga token no logout
+events: {
+  async signOut(message) {
+    const token = 'token' in message ? message.token : null;
+    if (token?.jti) {
+      await revokeToken(token.jti as string, { userId: token.id, reason: 'logout' });
+    }
+  }
+}
+```
+
+### 29.8 Mascaramento de Dados Sensiveis
+
+**REGRA:** Nunca logar emails completos ou IDs completos.
+
+```typescript
+// Mascarar email para logs
+export function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain) return '***';
+  const maskedLocal = local.length > 2 ? local.substring(0, 2) + '***' : '***';
+  return `${maskedLocal}@${domain}`;
+}
+
+// Uso
+console.log(`[AUTH] Login attempt: ${maskEmail(email)}`);
+// Output: "[AUTH] Login attempt: ra***@gmail.com"
+
+// Para IDs
+console.log(`[AUTH] Token revoked: ${jti.substring(0, 8)}...`);
+// Output: "[AUTH] Token revoked: a1b2c3d4..."
+```
+
+### 29.9 Checklist de Seguranca
+
+#### Antes de Deploy
+- [ ] Mensagens de erro genericas (sem user enumeration)
+- [ ] Timing attack prevention ativo
+- [ ] Account lockout configurado
+- [ ] Security headers (CSP, X-Frame-Options, etc.)
+- [ ] CORS configurado para producao
+- [ ] Token revocation integrado
+- [ ] Dados sensiveis mascarados em logs
+- [ ] HTTPS enforced (HSTS em producao)
+
+#### Variaveis de Ambiente Obrigatorias
+```env
+NEXTAUTH_SECRET=<random-secret-32-chars>
+NEXTAUTH_URL=https://yourdomain.com
+CLOUDFLARE_ACCOUNT_ID=<account-id>
+CLOUDFLARE_D1_UUID=<database-uuid>
+CLOUDFLARE_D1_TOKEN=<api-token>
+```
+
+#### Testes de Seguranca
+```bash
+# User enumeration (deve retornar mesmo erro)
+curl -X POST /api/auth/login -d '{"email":"fake@test.com","password":"x"}'
+curl -X POST /api/auth/login -d '{"email":"real@test.com","password":"wrong"}'
+
+# Security headers
+curl -I https://yourapp.com | grep -E "(X-Frame|Content-Security|X-Content-Type)"
+
+# Account lockout (5 tentativas = bloqueio)
+for i in {1..6}; do curl -X POST /api/auth/login -d '{"email":"test@test.com","password":"wrong"}'; done
+```
+
+---
+
 This guide is intended for AI agents to understand, maintain, and extend React/Next.js applications using FLUX architecture with shadcn/ui, Tailwind CSS, and modern best practices for scalability, maintainability, and performance.

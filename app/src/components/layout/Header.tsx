@@ -36,6 +36,7 @@ import {
   DropdownMenuTrigger,
 } from '@/src/components/ui/dropdown-menu';
 import { useTheme } from './ThemeProvider';
+import { UserMenu } from './UserMenu';
 
 // Page titles mapping
 const pageTitles: Record<string, string> = {
@@ -314,6 +315,9 @@ export function Header({
               {theme === 'dark' ? 'Modo claro' : 'Modo escuro'}
             </TooltipContent>
           </Tooltip>
+
+          {/* User Menu */}
+          <UserMenu />
         </div>
       </header>
     </TooltipProvider>

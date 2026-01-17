@@ -2,6 +2,82 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 
+// ============================================
+// SECURITY: Content Security Policy Configuration
+// ============================================
+
+/**
+ * Generate Content-Security-Policy header value
+ */
+function generateCSP(): string {
+  const directives = [
+    // Default fallback
+    "default-src 'self'",
+    // Scripts: self + inline (required for Next.js) + eval (required for dev)
+    process.env.NODE_ENV === 'production'
+      ? "script-src 'self' 'unsafe-inline'"
+      : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    // Styles: self + inline (required for Tailwind/CSS-in-JS)
+    "style-src 'self' 'unsafe-inline'",
+    // Images: self + data URIs + blob + any HTTPS (for user avatars)
+    "img-src 'self' data: blob: https:",
+    // Fonts: self
+    "font-src 'self'",
+    // Connections: self + WebSocket + any HTTPS API
+    "connect-src 'self' wss: ws: https:",
+    // Frames: none (prevent clickjacking)
+    "frame-ancestors 'none'",
+    // Form actions: self only
+    "form-action 'self'",
+    // Object/embed: none
+    "object-src 'none'",
+    // Base URI: self
+    "base-uri 'self'",
+  ];
+
+  return directives.join('; ');
+}
+
+/**
+ * Add security headers to response
+ */
+function addSecurityHeaders(response: NextResponse): NextResponse {
+  // Content Security Policy
+  response.headers.set('Content-Security-Policy', generateCSP());
+
+  // Prevent clickjacking
+  response.headers.set('X-Frame-Options', 'DENY');
+
+  // Prevent MIME type sniffing
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+
+  // XSS Protection (legacy browsers)
+  response.headers.set('X-XSS-Protection', '1; mode=block');
+
+  // Referrer Policy
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+  // Permissions Policy (disable unused features)
+  response.headers.set(
+    'Permissions-Policy',
+    'camera=(), microphone=(), geolocation=(), interest-cohort=()'
+  );
+
+  // HSTS (only in production with HTTPS)
+  if (process.env.NODE_ENV === 'production') {
+    response.headers.set(
+      'Strict-Transport-Security',
+      'max-age=31536000; includeSubDomains'
+    );
+  }
+
+  return response;
+}
+
+// ============================================
+// Route Configuration
+// ============================================
+
 // Routes that require authentication
 const protectedRoutes = [
   '/',
@@ -20,12 +96,17 @@ const authRoutes = ['/auth/signin', '/auth/register'];
 // Public routes (always accessible)
 const publicRoutes = ['/api/auth', '/api/health'];
 
+// ============================================
+// Middleware Handler
+// ============================================
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Allow public API routes
+  // Allow public API routes (with security headers)
   if (publicRoutes.some((route) => pathname.startsWith(route))) {
-    return NextResponse.next();
+    const response = NextResponse.next();
+    return addSecurityHeaders(response);
   }
 
   // Get session token - NextAuth v5 uses 'authjs.session-token' as cookie name
@@ -46,9 +127,11 @@ export async function middleware(request: NextRequest) {
   // Check if accessing auth routes while authenticated
   if (authRoutes.some((route) => pathname.startsWith(route))) {
     if (isAuthenticated) {
-      return NextResponse.redirect(new URL('/', request.url));
+      const redirectResponse = NextResponse.redirect(new URL('/', request.url));
+      return addSecurityHeaders(redirectResponse);
     }
-    return NextResponse.next();
+    const response = NextResponse.next();
+    return addSecurityHeaders(response);
   }
 
   // Check if accessing protected routes without authentication
@@ -56,11 +139,13 @@ export async function middleware(request: NextRequest) {
     if (!isAuthenticated) {
       const signInUrl = new URL('/auth/signin', request.url);
       signInUrl.searchParams.set('callbackUrl', pathname);
-      return NextResponse.redirect(signInUrl);
+      const redirectResponse = NextResponse.redirect(signInUrl);
+      return addSecurityHeaders(redirectResponse);
     }
   }
 
-  return NextResponse.next();
+  const response = NextResponse.next();
+  return addSecurityHeaders(response);
 }
 
 export const config = {

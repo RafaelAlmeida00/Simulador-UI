@@ -1,5 +1,3 @@
-'use server';
-
 import { hash, compare } from 'bcryptjs';
 
 // Cloudflare D1 configuration
@@ -36,7 +34,19 @@ interface User {
   provider: string;
   created_at: number;
   updated_at: number;
+  // Lockout fields (security hardening)
+  failed_login_attempts: number;
+  locked_until: number | null;
+  last_login_at: number | null;
 }
+
+// Security constants
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MINUTES = 15;
+// Minimum response time to prevent timing attacks (ms)
+const MIN_RESPONSE_TIME_MS = 500;
+// Dummy hash for timing attack prevention (pre-computed bcrypt hash)
+const DUMMY_PASSWORD_HASH = '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.VTtYqV/mHvHLKi';
 
 // Execute SQL query on Cloudflare D1
 async function executeD1Query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
@@ -214,3 +224,93 @@ export async function verifyPassword(
 export async function hashPassword(password: string): Promise<string> {
   return hash(password, 12);
 }
+
+// ============================================
+// SECURITY: Account Lockout & Brute Force Protection
+// ============================================
+
+/**
+ * Check if account is currently locked
+ */
+export async function isAccountLocked(userId: string, lockedUntil: number | null): Promise<boolean> {
+  if (!lockedUntil) return false;
+  const now = Math.floor(Date.now() / 1000);
+  return lockedUntil > now;
+}
+
+/**
+ * Increment failed login attempts and potentially lock account
+ */
+export async function incrementFailedAttempts(userId: string, currentAttempts: number): Promise<void> {
+  const newAttempts = (currentAttempts || 0) + 1;
+  const shouldLock = newAttempts >= MAX_FAILED_ATTEMPTS;
+  const now = Math.floor(Date.now() / 1000);
+  const lockedUntil = shouldLock
+    ? now + (LOCKOUT_DURATION_MINUTES * 60)
+    : null;
+
+  try {
+    await executeD1Query(
+      'UPDATE users SET failed_login_attempts = ?, locked_until = ?, updated_at = ? WHERE id = ?',
+      [newAttempts, lockedUntil, now, userId]
+    );
+
+    if (shouldLock) {
+      console.warn(`[AUTH] Account locked after ${MAX_FAILED_ATTEMPTS} failed attempts: ${userId.substring(0, 8)}...`);
+    }
+  } catch (error) {
+    console.error('Error updating failed attempts:', error);
+  }
+}
+
+/**
+ * Reset failed attempts on successful login
+ */
+export async function resetFailedAttempts(userId: string): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    await executeD1Query(
+      'UPDATE users SET failed_login_attempts = 0, locked_until = NULL, last_login_at = ?, updated_at = ? WHERE id = ?',
+      [now, now, userId]
+    );
+  } catch (error) {
+    console.error('Error resetting failed attempts:', error);
+  }
+}
+
+/**
+ * Verify password with timing attack prevention
+ * Always performs bcrypt comparison even if user doesn't exist
+ */
+export async function verifyPasswordSecure(
+  password: string,
+  hashedPassword: string | null
+): Promise<boolean> {
+  // Use dummy hash if no real hash exists (prevents timing attacks)
+  const hashToCompare = hashedPassword || DUMMY_PASSWORD_HASH;
+  return compare(password, hashToCompare);
+}
+
+/**
+ * Mask email for logging (prevents leaking full email in logs)
+ */
+export function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain) return '***';
+  const maskedLocal = local.length > 2 ? local.substring(0, 2) + '***' : '***';
+  return `${maskedLocal}@${domain}`;
+}
+
+/**
+ * Helper to ensure minimum response time (timing attack prevention)
+ */
+export async function ensureMinResponseTime(startTime: number): Promise<void> {
+  const elapsed = Date.now() - startTime;
+  const remainingDelay = Math.max(0, MIN_RESPONSE_TIME_MS - elapsed);
+  if (remainingDelay > 0) {
+    await new Promise(resolve => setTimeout(resolve, remainingDelay));
+  }
+}
+
+// Export constants for use in other modules
+export { MAX_FAILED_ATTEMPTS, LOCKOUT_DURATION_MINUTES, MIN_RESPONSE_TIME_MS, DUMMY_PASSWORD_HASH };

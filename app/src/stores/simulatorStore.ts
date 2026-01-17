@@ -173,7 +173,7 @@ export const simulatorStore = {
       oeeState = [data];
     }
 
-    state = { ...state, oee: payload, oeeState };
+    state = { ...state, oee: payload, oeeState };    
     emitChange();
   },
 

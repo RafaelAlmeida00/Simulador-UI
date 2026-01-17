@@ -4,7 +4,7 @@ import customParser from 'socket.io-msgpack-parser';
 import { throttle, DebouncedFunc } from 'lodash-es';
 import { simulatorStore } from '../stores/simulatorStore';
 import { getRuntimeEnv } from './runtimeEnv';
-import { getAuthToken, getCsrfToken } from './authTokens';
+import { getAuthToken, getCsrfToken, refreshAuthToken } from './authTokens';
 import type { OptimizedSocketMessage, AckPayload } from '../types/delta';
 import type { PlantSnapshot, IStopLine, IBuffer, ICar, OEEDataEmit, MTTRMTBFData } from '../types/socket';
 import {
@@ -392,7 +392,16 @@ function createSocket(): Socket {
     ensureDefaultSubscriptions(s);
   });
 
-  s.on('connect_error', () => {
+  s.on('connect_error', (error) => {
+    // Check if error is due to expired token
+    const errorMsg = error?.message || '';
+    if (errorMsg.includes('expirado') || errorMsg.includes('expired')) {
+      console.log('[socket] Token expired, refreshing and reconnecting');
+      refreshAuthToken().then(() => {
+        // Retry connection after token refresh
+        setTimeout(() => s.connect(), 1000);
+      });
+    }
   });
 
   s.io.on('reconnect_attempt', () => {
