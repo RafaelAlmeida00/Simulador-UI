@@ -25,6 +25,19 @@ let socket: Socket | null = null;
 // Events channel removed - now API-only
 const DEFAULT_CHANNELS = ['plantstate', 'stops', 'buffers', 'health', 'cars', 'oee', 'mttr_mtbf'] as const;
 
+// Track subscribed rooms
+const subscribedRooms = new Set<string>();
+
+// Simulator control types
+export type SimulatorAction = 'start' | 'pause' | 'restart' | 'stop';
+
+export interface ControlSimulatorResponse {
+  success: boolean;
+  action: SimulatorAction;
+  status: 'running' | 'stopped' | 'paused' | 'unknown';
+  error?: string;
+}
+
 /**
  * Throttle configuration for each WebSocket channel.
  * Optimized based on data update frequency and UI requirements.
@@ -66,6 +79,7 @@ function createThrottledHandler(
 function ensureDefaultSubscriptions(s: Socket) {
   for (const ch of DEFAULT_CHANNELS) {
     s.emit('subscribe', ch);
+    subscribedRooms.add(ch);
   }
 }
 
@@ -424,6 +438,9 @@ function createSocket(): Socket {
 
     // Reset caches on disconnect
     resetAllCaches();
+
+    // Clear subscribed rooms on disconnect
+    subscribedRooms.clear();
   });
 
 
@@ -471,13 +488,42 @@ export function reconnectSocket(): Socket {
 // Helper to subscribe dynamically
 export function subscribeTo(...channels: string[]) {
   const s = getSocket();
-  channels.forEach(ch => s.emit('subscribe', ch));
+  channels.forEach(ch => {
+    s.emit('subscribe', ch);
+    subscribedRooms.add(ch);
+  });
 }
 
 // Helper to unsubscribe from channels
 export function unsubscribeFrom(...channels: string[]) {
   const s = getSocket();
-  channels.forEach(ch => s.emit('unsubscribe', ch));
+  channels.forEach(ch => {
+    s.emit('unsubscribe', ch);
+    subscribedRooms.delete(ch);
+  });
+}
+
+// Get list of subscribed rooms
+export function getSubscribedRooms(): string[] {
+  return Array.from(subscribedRooms);
+}
+
+// Get count of subscribed rooms
+export function getSubscribedRoomsCount(): number {
+  return subscribedRooms.size;
+}
+
+// Send simulator control command
+export function sendSimulatorControl(
+  action: SimulatorAction,
+  onResponse?: (response: ControlSimulatorResponse) => void
+): void {
+  const s = getSocket();
+  s.emit('controlSimulator', { action });
+
+  if (onResponse) {
+    s.once('controlSimulator', onResponse);
+  }
 }
 
 // Request full state for a specific channel

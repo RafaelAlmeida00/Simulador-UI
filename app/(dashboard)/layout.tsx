@@ -24,6 +24,9 @@ export default function DashboardLayout({
     getSocket();
   }, []);
 
+  // Get simulator status from health data
+  const simulatorStatus = simHealth?.data?.simulatorStatus as 'running' | 'paused' | 'stopped' | undefined;
+
   return (
     <QueryProvider>
       <TooltipProvider>
@@ -33,6 +36,7 @@ export default function DashboardLayout({
             <Header
               connected={simConnect}
               simulatorTime={simHealth?.data?.simulatorTimestamp}
+              simulatorStatus={simulatorStatus ?? 'stopped'}
             />
             <main className="flex-1 overflow-auto">
               <PageTransition>

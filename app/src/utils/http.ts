@@ -1,6 +1,7 @@
 import axios, { AxiosError, InternalAxiosRequestConfig, AxiosResponse, AxiosHeaders } from 'axios';
 import { getRuntimeEnv } from './runtimeEnv';
 import { getAuthHeaders } from './authTokens';
+import { setDatabaseConnected } from './databaseStatus';
 
 const pendingRequests = new Map<string, Promise<AxiosResponse>>();
 
@@ -70,6 +71,8 @@ http.interceptors.response.use(
     if (key) {
       pendingRequests.delete(key);
     }
+    // Mark database as connected on successful response
+    setDatabaseConnected(true);
     return response;
   },
   async (error: AxiosError) => {
@@ -86,6 +89,11 @@ http.interceptors.response.use(
     const key = config.__requestKey;
     if (key) {
       pendingRequests.delete(key);
+    }
+
+    // Mark database as disconnected on connection failure or server error
+    if (!error.response || error.response.status === 503 || error.code === 'ECONNREFUSED') {
+      setDatabaseConnected(false);
     }
 
     const MAX_RETRIES = 3;

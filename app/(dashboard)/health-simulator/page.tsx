@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
   Activity,
   RefreshCw,
@@ -10,9 +10,12 @@ import {
   Server,
   Database,
   Clock,
-  Cpu,
   HardDrive,
   Wifi,
+  Play,
+  Pause,
+  RotateCcw,
+  Square,
 } from 'lucide-react';
 import { Card } from '@/src/components/ui/card';
 import { Badge } from '@/src/components/ui/badge';
@@ -25,19 +28,33 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/src/components/ui/too
 import { StatsCard, StatusBadge } from '@/src/components/data-display';
 import { EmptyState } from '@/src/components/feedback';
 import http from '@/src/utils/http';
+import {
+  getSubscribedRooms,
+  getSubscribedRoomsCount,
+  sendSimulatorControl,
+  type SimulatorAction,
+  type ControlSimulatorResponse,
+} from '@/src/utils/socket';
+import { isDatabaseConnected } from '@/src/utils/databaseStatus';
+import { useSimulatorSelector } from '@/src/hooks/useSimulatorStore';
+import { cn } from '@/src/lib/utils';
+
+// Memory constants
+const TOTAL_RAM_MB = 16384; // 16GB
+const TARGET_RAM_MB = 8192; // 8GB target
+
+type MemoryData = {
+  heapUsed?: string;
+  heapTotal?: string;
+  external?: string;
+  rss?: string;
+};
 
 type HealthData = {
   status?: string;
   simulatorTimestamp?: number;
   uptime?: number;
-  memory?: {
-    used?: number;
-    total?: number;
-    percentage?: number;
-  };
-  cpu?: {
-    usage?: number;
-  };
+  memory?: MemoryData;
   connections?: {
     websocket?: number;
     database?: boolean;
@@ -56,6 +73,15 @@ export default function HealthSimulatorPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [data, setData] = React.useState<HealthResponse | null>(null);
   const [lastUpdate, setLastUpdate] = React.useState<Date | null>(null);
+  const [controlLoading, setControlLoading] = React.useState(false);
+  const [controlFeedback, setControlFeedback] = React.useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  // Get real-time status from store
+  const health = useSimulatorSelector((s) => s.health);
+  const connected = useSimulatorSelector((s) => s.connected);
+
+  // Get simulator status from real-time health data
+  const simulatorStatus = health?.data?.simulatorStatus ?? 'stopped';
 
   const fetchHealth = React.useCallback(async () => {
     try {
@@ -87,6 +113,25 @@ export default function HealthSimulatorPage() {
     return () => window.removeEventListener('keydown', handler);
   }, [loading, fetchHealth]);
 
+  // Handle simulator control
+  const handleSimulatorControl = React.useCallback((action: SimulatorAction) => {
+    setControlLoading(true);
+    setControlFeedback(null);
+
+    sendSimulatorControl(action, (response: ControlSimulatorResponse) => {
+      setControlLoading(false);
+      if (response.success) {
+        setControlFeedback({ message: `Comando "${action}" executado com sucesso`, type: 'success' });
+        // Refresh health data after control action
+        setTimeout(() => fetchHealth(), 500);
+      } else {
+        setControlFeedback({ message: response.error ?? 'Erro ao executar comando', type: 'error' });
+      }
+      // Clear feedback after 3 seconds
+      setTimeout(() => setControlFeedback(null), 3000);
+    });
+  }, [fetchHealth]);
+
   // Determine overall status
   const healthData = React.useMemo((): HealthData | null => {
     if (!data) return null;
@@ -100,24 +145,25 @@ export default function HealthSimulatorPage() {
     return healthData?.status === 'healthy' || healthData?.status === 'ok';
   }, [healthData]);
 
-  // Format uptime
-  const formatUptime = (seconds: number): string => {
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
+  // Format uptime (input is in milliseconds)
+  const formatUptime = (ms: number): string => {
+    const totalSeconds = Math.floor(ms / 1000);
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
 
     if (days > 0) return `${days}d ${hours}h ${minutes}m`;
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    return `${minutes}m`;
+    if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+    if (minutes > 0) return `${minutes}m ${seconds}s`;
+    return `${seconds}s`;
   };
 
-  // Format bytes
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+  // Parse memory string to MB number
+  const parseMemoryMB = (str: string | undefined): number => {
+    if (!str) return 0;
+    const match = str.match(/(\d+(?:\.\d+)?)/);
+    return match ? parseFloat(match[1]) : 0;
   };
 
   // Format timestamp
@@ -125,6 +171,36 @@ export default function HealthSimulatorPage() {
     if (!date) return '--';
     return date.toLocaleString('pt-BR');
   };
+
+  // Get WebSocket rooms info
+  const wsRoomsCount = getSubscribedRoomsCount();
+  const wsRoomsList = getSubscribedRooms().join(', ');
+
+  // Get database status from global state
+  const dbConnected = isDatabaseConnected();
+
+  // Calculate memory usage
+  const memoryInfo = React.useMemo(() => {
+    const memory = healthData?.memory;
+    if (!memory) return null;
+
+    const rss = parseMemoryMB(memory.rss);
+    const heapUsed = parseMemoryMB(memory.heapUsed);
+    const heapTotal = parseMemoryMB(memory.heapTotal);
+    const external = parseMemoryMB(memory.external);
+
+    const percentOfTarget = (rss / TARGET_RAM_MB) * 100;
+    const percentOfSystem = (rss / TOTAL_RAM_MB) * 100;
+
+    return {
+      rss,
+      heapUsed,
+      heapTotal,
+      external,
+      percentOfTarget: Math.min(percentOfTarget, 100),
+      percentOfSystem,
+    };
+  }, [healthData?.memory]);
 
   return (
     <div className="space-y-6">
@@ -188,6 +264,7 @@ export default function HealthSimulatorPage() {
               <Skeleton key={i} className="h-[120px] rounded-xl" />
             ))}
           </div>
+          <Skeleton className="h-[200px] rounded-xl" />
           <Skeleton className="h-[400px] rounded-xl" />
         </div>
       ) : error ? (
@@ -223,95 +300,205 @@ export default function HealthSimulatorPage() {
               iconColor="var(--color-info)"
             />
             <StatsCard
-              title="WebSocket"
-              value={healthData?.connections?.websocket ?? 0}
-              subtitle="conexoes ativas"
+              title="WebSocket Rooms"
+              value={wsRoomsCount}
+              subtitle={wsRoomsList || 'nenhuma room inscrita'}
               icon={Wifi}
-              iconColor="var(--color-primary)"
+              iconColor={connected ? 'var(--color-success)' : 'var(--color-destructive)'}
             />
             <StatsCard
               title="Database"
-              value={healthData?.connections?.database ? 'Conectado' : 'Desconectado'}
-              subtitle={healthData?.connections?.database ? 'operacional' : 'verificar conexao'}
+              value={dbConnected ? 'Conectado' : 'Desconectado'}
+              subtitle={dbConnected ? 'operacional' : 'verificar conexao'}
               icon={Database}
-              iconColor={healthData?.connections?.database ? 'var(--color-success)' : 'var(--color-destructive)'}
+              iconColor={dbConnected ? 'var(--color-success)' : 'var(--color-destructive)'}
             />
           </motion.div>
 
-          {/* System Resources */}
-          {(healthData?.memory || healthData?.cpu) && (
+          {/* Simulator Controls */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.12 }}
+          >
+            <Card className="p-4">
+              <div className="flex items-center gap-2 mb-4">
+                <Server className="h-5 w-5 text-primary" />
+                <h3 className="font-semibold">Controles da Simulacao</h3>
+                <div className={cn(
+                  'ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1',
+                  simulatorStatus === 'running' && 'bg-success/20 text-success',
+                  simulatorStatus === 'paused' && 'bg-warning/20 text-warning',
+                  simulatorStatus === 'stopped' && 'bg-destructive/20 text-destructive'
+                )}>
+                  {simulatorStatus === 'running' && <Play className="h-3 w-3" />}
+                  {simulatorStatus === 'paused' && <Pause className="h-3 w-3" />}
+                  {simulatorStatus === 'stopped' && <Square className="h-3 w-3" />}
+                  <span className="text-xs font-medium capitalize">
+                    {simulatorStatus}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={simulatorStatus === 'running' ? 'success' : 'outline'}
+                      size="sm"
+                      onClick={() => handleSimulatorControl('start')}
+                      disabled={controlLoading || simulatorStatus === 'running'}
+                      className="gap-2"
+                    >
+                      <Play className="h-4 w-4" />
+                      Iniciar
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Iniciar simulacao</TooltipContent>
+                </Tooltip>
+
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={simulatorStatus === 'paused' ? 'warning' : 'outline'}
+                      size="sm"
+                      onClick={() => handleSimulatorControl('pause')}
+                      disabled={controlLoading || simulatorStatus !== 'running'}
+                      className="gap-2"
+                    >
+                      <Pause className="h-4 w-4" />
+                      Pausar
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Pausar simulacao</TooltipContent>
+                </Tooltip>
+
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSimulatorControl('restart')}
+                      disabled={controlLoading}
+                      className="gap-2"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      Reiniciar
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Reiniciar simulacao do zero</TooltipContent>
+                </Tooltip>
+
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSimulatorControl('stop')}
+                      disabled={controlLoading || simulatorStatus === 'stopped'}
+                      className="gap-2 hover:text-destructive hover:border-destructive"
+                    >
+                      <Square className="h-4 w-4" />
+                      Parar
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Parar simulacao</TooltipContent>
+                </Tooltip>
+              </div>
+
+              {controlFeedback && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className={cn(
+                    'mt-3 text-sm px-3 py-2 rounded-lg',
+                    controlFeedback.type === 'success' && 'bg-success/20 text-success',
+                    controlFeedback.type === 'error' && 'bg-destructive/20 text-destructive'
+                  )}
+                >
+                  {controlFeedback.message}
+                </motion.div>
+              )}
+            </Card>
+          </motion.div>
+
+          {/* Memory Card */}
+          {memoryInfo && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.15 }}
-              className="grid grid-cols-1 md:grid-cols-2 gap-4"
             >
-              {/* Memory Card */}
-              {healthData?.memory && (
-                <Card className="p-4">
-                  <div className="flex items-center gap-2 mb-4">
-                    <HardDrive className="h-5 w-5 text-primary" />
-                    <h3 className="font-semibold">Memoria</h3>
-                  </div>
-                  <div className="space-y-3">
+              <Card className="p-4">
+                <div className="flex items-center gap-2 mb-4">
+                  <HardDrive className="h-5 w-5 text-primary" />
+                  <h3 className="font-semibold">Memoria</h3>
+                </div>
+                <div className="space-y-4">
+                  {/* RSS - Resident Set Size (real physical memory) */}
+                  <div className="space-y-2">
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Usado</span>
+                      <span className="text-muted-foreground">RSS (Memoria Fisica)</span>
                       <span className="font-medium">
-                        {formatBytes(healthData.memory.used ?? 0)} / {formatBytes(healthData.memory.total ?? 0)}
+                        {memoryInfo.rss.toFixed(0)} MB / {(TARGET_RAM_MB / 1024).toFixed(0)} GB (target) / {(TOTAL_RAM_MB / 1024).toFixed(0)} GB (total)
                       </span>
                     </div>
                     <Progress
-                      value={healthData.memory.percentage ?? 0}
+                      value={memoryInfo.percentOfTarget}
                       className="h-3"
                       indicatorClassName={
-                        (healthData.memory.percentage ?? 0) < 70
+                        memoryInfo.percentOfTarget < 50
                           ? 'bg-success'
-                          : (healthData.memory.percentage ?? 0) < 90
+                          : memoryInfo.percentOfTarget < 75
                           ? 'bg-warning'
                           : 'bg-destructive'
                       }
                     />
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Uso</span>
-                      <span className="font-medium">{(healthData.memory.percentage ?? 0).toFixed(1)}%</span>
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>{memoryInfo.percentOfTarget.toFixed(1)}% do target (8GB)</span>
+                      <span>{memoryInfo.percentOfSystem.toFixed(2)}% do sistema (16GB)</span>
                     </div>
                   </div>
-                </Card>
-              )}
 
-              {/* CPU Card */}
-              {healthData?.cpu && (
-                <Card className="p-4">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Cpu className="h-5 w-5 text-primary" />
-                    <h3 className="font-semibold">CPU</h3>
-                  </div>
-                  <div className="space-y-3">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Uso atual</span>
-                      <span className="font-medium">{(healthData.cpu.usage ?? 0).toFixed(1)}%</span>
+                  <Separator />
+
+                  {/* Heap Details */}
+                  <div className="grid grid-cols-3 gap-4 text-sm">
+                    <div>
+                      <span className="text-muted-foreground block">Heap Usado</span>
+                      <span className="font-medium">{memoryInfo.heapUsed.toFixed(0)} MB</span>
                     </div>
-                    <Progress
-                      value={healthData.cpu.usage ?? 0}
-                      className="h-3"
-                      indicatorClassName={
-                        (healthData.cpu.usage ?? 0) < 70
-                          ? 'bg-success'
-                          : (healthData.cpu.usage ?? 0) < 90
-                          ? 'bg-warning'
-                          : 'bg-destructive'
+                    <div>
+                      <span className="text-muted-foreground block">Heap Total</span>
+                      <span className="font-medium">{memoryInfo.heapTotal.toFixed(0)} MB</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground block">External</span>
+                      <span className="font-medium">{memoryInfo.external.toFixed(0)} MB</span>
+                    </div>
+                  </div>
+
+                  {/* Status Badge */}
+                  <div className="flex justify-end">
+                    <StatusBadge
+                      status={
+                        memoryInfo.percentOfTarget < 50
+                          ? 'success'
+                          : memoryInfo.percentOfTarget < 75
+                          ? 'warning'
+                          : 'error'
+                      }
+                      label={
+                        memoryInfo.percentOfTarget < 50
+                          ? 'Normal'
+                          : memoryInfo.percentOfTarget < 75
+                          ? 'Elevado'
+                          : 'Critico'
                       }
                     />
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Status</span>
-                      <StatusBadge
-                        status={(healthData.cpu.usage ?? 0) < 70 ? 'success' : (healthData.cpu.usage ?? 0) < 90 ? 'warning' : 'error'}
-                        label={(healthData.cpu.usage ?? 0) < 70 ? 'Normal' : (healthData.cpu.usage ?? 0) < 90 ? 'Elevado' : 'Critico'}
-                      />
-                    </div>
                   </div>
-                </Card>
-              )}
+                </div>
+              </Card>
             </motion.div>
           )}
 
