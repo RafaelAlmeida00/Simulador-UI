@@ -15,6 +15,7 @@ async function proxyRequest(request: NextRequest, path: string[]) {
     }
   });
 
+
   try {
     const response = await fetch(targetUrl, {
       method: request.method,

@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useRouter } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -12,7 +13,10 @@ import {
   CheckCircle2,
   XCircle,
   ImageIcon,
+  ArrowLeftRight,
+  MonitorPlay,
 } from 'lucide-react';
+import { useSessionStore, selectSessionMetadata } from '@/src/stores/sessionStore';
 import { cn } from '@/src/lib/utils';
 import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
@@ -47,7 +51,10 @@ interface UserMenuProps {
 }
 
 export function UserMenu({ className }: UserMenuProps) {
+  const router = useRouter();
   const { data: session, update: updateSession } = useSession();
+  const sessionMetadata = useSessionStore(selectSessionMetadata);
+  const clearSession = useSessionStore((s) => s.clearSession);
   const [nameModalOpen, setNameModalOpen] = React.useState(false);
   const [photoModalOpen, setPhotoModalOpen] = React.useState(false);
   const [newName, setNewName] = React.useState('');
@@ -56,6 +63,12 @@ export function UserMenu({ className }: UserMenuProps) {
   const [errorMessage, setErrorMessage] = React.useState('');
 
   const user = session?.user;
+
+  // Handle session switch
+  const handleSwitchSession = () => {
+    clearSession();
+    router.push('/sessions');
+  };
 
   const getInitials = (name: string | null | undefined) => {
     if (!name) return 'U';
@@ -222,6 +235,26 @@ export function UserMenu({ className }: UserMenuProps) {
             Alterar Nome
           </DropdownMenuItem>
           <DropdownMenuSeparator />
+
+          {/* Current Session Info & Switch */}
+          {sessionMetadata && (
+            <>
+              <DropdownMenuLabel className="font-normal py-2">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <MonitorPlay className="h-4 w-4" />
+                  <span className="text-xs truncate max-w-[180px]">
+                    {sessionMetadata.name || 'Sessao atual'}
+                  </span>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuItem onClick={handleSwitchSession} className="cursor-pointer">
+                <ArrowLeftRight className="mr-2 h-4 w-4" />
+                Trocar Sessao
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
+
           <DropdownMenuItem
             onClick={handleLogout}
             className="cursor-pointer text-destructive focus:text-destructive"

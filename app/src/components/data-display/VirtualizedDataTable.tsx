@@ -96,28 +96,11 @@ export function VirtualizedDataTable<T extends Record<string, unknown>>({
   className,
   onRowClick,
   emptyMessage = 'Nenhum registro encontrado',
-  getRowKey,
 }: VirtualizedDataTableProps<T>) {
   const [search, setSearch] = React.useState('');
   const [sortKey, setSortKey] = React.useState<string | null>(null);
   const [sortDirection, setSortDirection] = React.useState<SortDirection>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = React.useState(0);
-
-  // Measure container width for responsive columns
-  React.useEffect(() => {
-    if (!containerRef.current) return;
-
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (entry) {
-        setContainerWidth(entry.contentRect.width);
-      }
-    });
-
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, []);
 
   // Filter data based on search
   const filteredData = React.useMemo(() => {
@@ -144,23 +127,6 @@ export function VirtualizedDataTable<T extends Record<string, unknown>>({
       return sortDirection === 'asc' ? comparison : -comparison;
     });
   }, [filteredData, sortKey, sortDirection]);
-
-  const handleSort = React.useCallback((key: string) => {
-    setSortKey((prevKey) => {
-      if (prevKey === key) {
-        setSortDirection((prevDir) => {
-          if (prevDir === 'asc') return 'desc';
-          if (prevDir === 'desc') return null;
-          return 'asc';
-        });
-        // If previous direction was 'desc', clear sortKey, else keep key
-        return sortDirection === 'desc' ? null : key;
-      } else {
-        setSortDirection('asc');
-        return key;
-      }
-    });
-  }, [sortDirection]);
 
   const handleSortClick = React.useCallback((key: string) => {
     if (sortKey === key) {

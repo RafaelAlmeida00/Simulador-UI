@@ -52,8 +52,8 @@ The project follows **Clean Architecture** principles with clear layer separatio
 ┌─────────────────────────────────────────────────────────────────┐
 │                      APPLICATION LAYER                          │
 │  ┌─────────────────┐  ┌─────────────┐  ┌────────────────────┐   │
-│  │ SimulationClock │  │ Simulation  │  │    Simulation      │   │
-│  │   (Orchestrator)│  │    Flow     │  │   EventEmitter     │   │
+│  │ SimulationClock │  │ Simulation  │  │   SessionManager   │   │
+│  │   (Orchestrator)│  │    Flow     │  │  (Worker Threads)  │   │
 │  └─────────────────┘  └─────────────┘  └────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
                               ▲
@@ -125,26 +125,27 @@ interface BaseRepository<T> {
 Single instances for shared resources:
 
 - `DatabaseFactory` - One database connection per app
-- `SimulationEventEmitter` - Central event hub
 - `SocketServer` - Single WebSocket server
+- `SessionManager` - Manages all simulation sessions
 
 ### 4. Observer/Event Emitter Pattern
 
-Decoupled communication via events:
+Decoupled communication via Worker Thread message passing:
 
 ```
-SimulationClock (EventEmitter)
-       │
-       │ emits "tick"
-       ▼
-SimulationFlow.execute()
-       │
-       │ triggers callbacks
-       ▼
-SimulationEventEmitter
-       │
-       ├──► socketServer.emit() (real-time)
-       └──► repository.create() (persistence)
+WORKER THREAD                          MAIN THREAD
+┌──────────────────┐                   ┌─────────────────────┐
+│ SimulationClock  │                   │ SessionManager      │
+│       │          │                   │       │             │
+│ emits "tick"     │                   │ onWorkerEvent()     │
+│       ▼          │                   │       │             │
+│ SimulationFlow   │ ──postMessage()──►│       ▼             │
+│       │          │                   │ SocketServer        │
+│ triggers events  │                   │       │             │
+│       ▼          │                   │ broadcastToSession()│
+│ Repository       │                   └─────────────────────┘
+│ (persistence)    │
+└──────────────────┘
 ```
 
 ### 5. Strategy Pattern
@@ -431,16 +432,19 @@ Start Station ──► Station N ──► ... ──► Last Station ──►
 ### Event Flow Rules
 
 ```
-SimulationFlow.execute()
-       │
-       ├──► onCarCreated()    ──► emitCarCreated()    ──► DB + WebSocket
-       ├──► onCarMoved()      ──► emitCarMoved()      ──► DB + WebSocket
-       ├──► onCarCompleted()  ──► emitCarCompleted()  ──► DB + WebSocket
-       ├──► onBufferIn()      ──► emitBufferIn()      ──► DB + WebSocket
-       ├──► onBufferOut()     ──► emitBufferOut()     ──► DB + WebSocket
-       ├──► onStopStarted()   ──► emitStopStarted()   ──► DB + WebSocket
-       ├──► onStopEnded()     ──► emitStopEnded()     ──► DB + WebSocket
-       └──► onOEECalculated() ──► emitOEE()           ──► WebSocket (throttled)
+WORKER THREAD (per session)                    MAIN THREAD
+SimulationFlow.execute()                       SessionManager.onWorkerEvent()
+       │                                              │
+       ├──► onCarCreated()    ──► postMessage() ────► socketServer.emitSessionEvent()
+       ├──► onCarMoved()      ──► postMessage() ────► socketServer.emitSessionEvent()
+       ├──► onCarCompleted()  ──► postMessage() ────► socketServer.emitSessionEvent()
+       ├──► onBufferIn()      ──► postMessage() ────► socketServer.emitSessionEvent()
+       ├──► onBufferOut()     ──► postMessage() ────► socketServer.emitSessionEvent()
+       ├──► onStopStarted()   ──► postMessage() ────► socketServer.broadcastToSession()
+       ├──► onStopEnded()     ──► postMessage() ────► socketServer.broadcastToSession()
+       └──► onOEECalculated() ──► postMessage() ────► socketServer.broadcastToSession()
+
+       Repository.create() (persistence happens in worker thread)
 ```
 
 ---
@@ -483,8 +487,13 @@ src/
 │           └── index.ts
 ├── app/                               # Application layer
 │   ├── SimulationClock.ts             # Time control (pause/resume/restart)
-│   ├── SimulationEventEmitter.ts      # Event hub
 │   └── SimulationFlow.ts              # Core simulation logic
+├── sessions/                          # Multi-session management
+│   ├── SessionManager.ts              # Session lifecycle management
+│   ├── WorkerPoolManager.ts           # Worker Thread management
+│   └── RecoveryService.ts             # Session recovery after restart
+├── workers/                           # Worker Thread entry points
+│   └── SimulationWorker.ts            # Worker entry point
 ├── domain/                            # Domain layer
 │   ├── config/
 │   │   └── flowPlant.ts               # Plant configuration
@@ -505,6 +514,7 @@ src/
 │       └── MTTRMTBFService.ts
 └── utils/                             # Utilities
     ├── shared.ts                      # TypeScript interfaces
+    ├── pagination.ts                  # Pagination utilities
     ├── logger.ts                      # Pino logging
     ├── clock.ts                       # Time utilities
     └── restartDB.ts                   # Database reset
@@ -519,10 +529,13 @@ src/
 | `src/app/SimulationFlow.ts` | ~1037 | Core business logic - car movement, stops, buffers, OEE/MTTR/MTBF calculation |
 | `src/domain/config/flowPlant.ts` | ~778 | Complete plant configuration (shops, lines, buffers) |
 | `src/app/SimulationClock.ts` | ~393 | Simulation orchestration + tick loop |
+| `src/sessions/SessionManager.ts` | ~400+ | Session lifecycle, worker coordination, event routing |
+| `src/sessions/WorkerPoolManager.ts` | ~300+ | Worker Thread pool management |
+| `src/sessions/RecoveryService.ts` | ~340+ | Recovery data collection and restoration |
+| `src/workers/SimulationWorker.ts` | ~200+ | Worker entry point with message handling |
 | `src/domain/services/PlantService.ts` | ~488 | Plant structure initialization and management |
 | `src/domain/services/ServiceLocator.ts` | ~97 | Centralized dependency injection and service management |
 | `src/utils/shared.ts` | ~350+ | All TypeScript interfaces & types |
-| `src/app/SimulationEventEmitter.ts` | ~500+ | Event hub (WebSocket + persistence) |
 | `src/adapters/database/repositories/BaseRepository.ts` | ~94 | Abstract repository pattern |
 
 ---
@@ -612,6 +625,80 @@ interface IStopLine {
 | `/api/mttr-mtbf` | GET | MTTR/MTBF metrics |
 | `/api/config` | GET, POST, PUT | Plant configuration management |
 | `/api/health` | GET | System health status |
+| `/api/sessions` | GET, POST, DELETE | Session lifecycle management |
+
+### Session API Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/sessions` | POST | Create new session (idle state) |
+| `/api/sessions` | GET | List user's sessions |
+| `/api/sessions/stats` | GET | Get session count statistics |
+| `/api/sessions/interrupted` | GET | List interrupted sessions (for recovery) |
+| `/api/sessions/:id` | GET | Get session details |
+| `/api/sessions/:id/can-recover` | GET | Check if session can be recovered |
+| `/api/sessions/:id/start` | POST | Start session (spawn worker) |
+| `/api/sessions/:id/pause` | POST | Pause running session |
+| `/api/sessions/:id/resume` | POST | Resume paused session |
+| `/api/sessions/:id/stop` | POST | Stop session (keep data) |
+| `/api/sessions/:id/recover` | POST | Recover interrupted session |
+| `/api/sessions/:id/discard` | POST | Discard interrupted session |
+| `/api/sessions/:id` | DELETE | Delete session and all data |
+
+---
+
+## API Pagination
+
+All list endpoints (`/api/events`, `/api/stops`, `/api/oee`) support server-side pagination.
+
+### Query Parameters
+
+| Parameter | Type | Default | Max | Description |
+|-----------|------|---------|-----|-------------|
+| `page` | number | 1 | - | Page number (1-based) |
+| `limit` | number | 50 | 100 | Items per page |
+
+### Response Format
+
+```typescript
+{
+  success: boolean,
+  data: T[],
+  pagination: {
+    page: number,
+    limit: number,
+    total: number,
+    totalPages: number,
+    hasNext: boolean,
+    hasPrevious: boolean
+  },
+  count: number  // Items in current page
+}
+```
+
+### Examples
+
+```bash
+# Get first page with 20 items
+GET /api/events?page=1&limit=20
+
+# Get page 2 filtered by shop
+GET /api/events?shop=Body&page=2&limit=50
+
+# Get active stops with pagination
+GET /api/stops?status=IN_PROGRESS&page=1&limit=10
+```
+
+### Pagination Utility
+
+Located at `src/utils/pagination.ts`:
+
+| Function | Purpose |
+|----------|---------|
+| `parsePaginationParams(query)` | Parse and validate page/limit from request query |
+| `formatPaginatedResponse(result)` | Format `PaginatedResult` for HTTP response |
+| `createPaginatedResponse(data, pagination, total)` | Create paginated response from array |
+| `paginateArray(data, pagination)` | Apply in-memory pagination to array |
 
 ---
 
@@ -620,13 +707,88 @@ interface IStopLine {
 | Channel | Direction | Description |
 |---------|-----------|-------------|
 | `events` | Server → Client | Car creation/movement/completion |
-| `stops` | Server → Client | Stop started/ended |
-| `buffers` | Server → Client | Buffer state changes |
-| `plantstate` | Server → Client | Overall plant snapshot |
+| `stops` | Server → Client | Stop started/ended (delta optimized) |
+| `buffers` | Server → Client | Buffer state changes (delta optimized) |
+| `plantstate` | Server → Client | Overall plant snapshot (delta optimized) |
 | `health` | Server → Client | Server + simulator status |
-| `cars` | Server → Client | Current car positions |
+| `cars` | Server → Client | Current car positions (delta optimized) |
 | `oee` | Server → Client | OEE calculations (throttled) |
 | `controlSimulator` | Client → Server | pause, start, restart, stop |
+| `ack` | Client → Server | Acknowledge message receipt (backpressure) |
+| `{channel}:chunk` | Server → Client | Chunked payload for large messages |
+
+---
+
+## WebSocket Optimization Architecture
+
+### Services (src/adapters/http/websocket/)
+
+| Service | Purpose |
+|---------|---------|
+| `DeltaService` | Hierarchical delta computation per socket - tracks changes at every nesting level |
+| `BackpressureManager` | Flow control - prevents overwhelming slow clients with ack/timeout mechanism |
+| `ChunkingService` | Splits large payloads (>64KB) into logical chunks (by shop, batch, or bytes) |
+
+### Message Protocol
+
+**First Connection (FULL):**
+```typescript
+{
+  type: 'FULL',
+  channel: 'plantstate',
+  version: 1,
+  data: { /* complete state */ },
+  timestamp: number,
+  requiresAck: true
+}
+```
+
+**Subsequent Updates (DELTA):**
+```typescript
+{
+  type: 'DELTA',
+  channel: 'plantstate',
+  version: 42,
+  baseVersion: 41,
+  data: {
+    totalFree: 85,  // Only changed root fields
+    shops: [
+      {
+        id: 'PWT',           // ID always included
+        reworkBuffer: 3,     // Only changed shop fields
+        lines: [
+          {
+            id: 'LINE_1',    // ID always included
+            stations: [
+              {
+                id: 'PWT-1-03',
+                occupied: true,
+                currentCar: { id: 'CAR-456', hasDefect: true }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  timestamp: number,
+  requiresAck: true
+}
+```
+
+**Removed Items:**
+```typescript
+{ id: 'OLD_SHOP', _removed: true }  // Shop removed
+{ id: 'PWT-1-99', _removed: true }  // Station removed
+{ currentCar: null }                 // Car left station
+```
+
+### Client Requirements
+
+1. **MessagePack Parser**: `import msgpackParser from 'socket.io-msgpack-parser'`
+2. **Ack Handler**: `socket.emit('ack', { channel, version })`
+3. **Delta Merge**: Apply changes hierarchically using IDs as keys
+4. **Chunk Assembly**: Accumulate chunks, process when `chunkInfo.isLast === true`
 
 ---
 
@@ -652,16 +814,191 @@ DB_TYPE=sqlite npm run dev
 ## Important Notes for Claude
 
 1. **Always read existing code** before making modifications
-2. **Follow the established patterns** - Factory, Repository, Event-driven
+2. **Follow the established patterns** - Factory, Repository, Worker Thread messaging
 3. **Update interfaces first** when adding new features
 4. **Test with both databases** - PostgreSQL and SQLite
 5. **Maintain layer separation** - Don't mix concerns across layers
 6. **Use existing utilities** from `shared.ts`, `logger.ts`, `clock.ts`
-7. **Emit events** through `SimulationEventEmitter` for cross-cutting concerns
+7. **Use Worker Threads** - Each session runs in its own Worker Thread for isolation
 8. **Throttle appropriately** - Don't flood WebSocket or database
+
+## Session Management System
+
+### Multi-Session Architecture
+
+The simulator supports multiple concurrent simulation sessions using Worker Threads for full memory isolation:
+
+```
+MAIN THREAD                          WORKER THREADS
+┌─────────────────────┐              ┌──────────────────┐
+│ SessionManager      │──spawns───►  │ Worker (session1)│
+│ WorkerPoolManager   │              │  - ServiceLocator│
+│ SessionController   │              │  - SimulationClock
+│ RecoveryService     │◄──events──   │  - SimulationFlow│
+│ SocketServer        │              └──────────────────┘
+└─────────────────────┘              ┌──────────────────┐
+                                     │ Worker (session2)│
+                                     └──────────────────┘
+```
+
+### Session Lifecycle
+
+```
+idle ──► running ──► paused ──► stopped
+  │         │           │          ▲
+  │         │           └──────────┤
+  │         └──────────────────────┤
+  │                                │
+  │      ┌── interrupted ◄─(server restart)
+  │      │
+  │      ├─► running (via /recover)
+  │      └─► stopped (via /discard)
+  │
+  └────────► expired (via timeout)
+```
+
+**Session States:**
+- `idle` - Created but not started
+- `running` - Simulation actively running in worker
+- `paused` - Simulation paused, worker still active
+- `stopped` - Simulation stopped, data preserved
+- `expired` - Session exceeded duration limit
+- `interrupted` - Server restarted while session was running/paused
+
+### Session Limits
+
+| Limit | Default | Description |
+|-------|---------|-------------|
+| Global Active Sessions | 20 | Maximum sessions across all users |
+| Per-User Active Sessions | 2 | Maximum active sessions per user |
+| Session Duration | 7 days | Default expiration after start |
+
+### Session Recovery System
+
+When the server restarts, all Worker Threads are destroyed. The Recovery System:
+
+1. **On Server Startup:**
+   - Marks all `running`/`paused` sessions as `interrupted`
+   - Marks expired sessions as `expired`
+   - Marks stale interrupted sessions (>24h) as `stopped`
+
+2. **Recovery Data Sources:**
+   - `plant_snapshots` - Last plant state (every 30 minutes)
+   - `buffer_states` - Buffer contents (every 30 minutes)
+   - `car_events` - Completed car IDs (COMPLETED event type)
+   - `stop_events` - Active stops (IN_PROGRESS status)
+   - `sessions` - Clock state (simulated_timestamp, current_tick)
+
+3. **Recovery Flow:**
+   ```
+   User → GET /api/sessions/interrupted → Lists recoverable sessions
+   User → GET /api/sessions/:id/can-recover → Checks if data exists
+   User → POST /api/sessions/:id/recover → Spawns worker, restores state
+   ```
+
+### Key Session Files
+
+| File | Purpose |
+|------|---------|
+| `src/sessions/SessionManager.ts` | Session lifecycle management |
+| `src/sessions/WorkerPoolManager.ts` | Worker Thread management |
+| `src/sessions/RecoveryService.ts` | Recovery data collection and restoration |
+| `src/workers/SimulationWorker.ts` | Worker entry point |
+| `src/adapters/http/controllers/SessionController.ts` | HTTP endpoints |
+| `src/adapters/http/repositories/SessionRepository.ts` | Database access |
+
+---
+
+## Recent Changes (2026-01-18)
+
+### Legacy Simulation System Removed
+
+**Removed Files:**
+- `src/app/SimulationEventEmitter.ts` - No longer needed (workers use `parentPort.postMessage()`)
+- `src/domain/factories/SimulationFactory.ts` - Workers instantiate `SimulationClock` directly
+
+**Modified Files:**
+- `src/index.ts` - Removed `StartSimulation()`, `setSimulatorClock()`, `setSimulator()`, legacy callbacks
+- `src/adapters/http/server.ts` - Removed `simulatorClock` property and `setSimulatorClock()` method
+- `src/adapters/http/websocket/SocketServer.ts` - Removed `simulator` property, `setSimulator()`, and `controlSimulator` handler
+- `src/adapters/http/controllers/HealthController.ts` - Refactored to use `SessionManager` for session stats
+
+**Breaking Changes:**
+- WebSocket `controlSimulator` event removed - use HTTP endpoints (`POST /api/sessions/:id/pause`, etc.)
+- `/api/health` no longer includes `simulatorStatus` - use `/api/sessions/:id` for session status
+- No automatic simulation on server start - create sessions via `POST /api/sessions`
+
+**New Server Boot Behavior:**
+1. Database initialization
+2. SessionManager initialization + recovery handling
+3. Session route registration
+4. Worker event forwarding setup
+5. HTTP server start
+6. Ready for session creation via API
+
+---
+
+### Session Recovery System Implementation
+
+**New Files:**
+- `src/sessions/RecoveryService.ts` - Handles server startup recovery and session restoration
+- `src/workers/SimulationWorker.ts` - Worker Thread entry point with RECOVER command
+
+**Modified Files:**
+- `SessionRepository.ts` - Added 'interrupted' status, recovery methods
+- `SessionManager.ts` - Added recovery integration
+- `WorkerPoolManager.ts` - Added RECOVER command type
+- `CarService.ts` / `CarFactory.ts` - Added `restoreCompletedCars()`
+- `BufferService.ts` - Added `restoreBufferStates()`
+- `StopLineService.ts` - Added `restoreActiveStops()`
+- `PlantService.ts` - Added `restoreFromSnapshot()`
+- `SimulationClock.ts` - Added `setInitialState()`
+- Database schemas - Added `simulated_timestamp`, `current_tick`, `last_snapshot_at`, `interrupted_at` columns
+
+**New API Endpoints:**
+- `GET /api/sessions/interrupted` - List interrupted sessions
+- `GET /api/sessions/:id/can-recover` - Check recoverability
+- `POST /api/sessions/:id/recover` - Recover session
+- `POST /api/sessions/:id/discard` - Discard interrupted session
+
+---
+
+### OEE Calculation Fixes
+
+**Issue 1: Line OEE used theoretical takt instead of bottleneck**
+- **Problem**: OEE calculation used `line.taktMn` (theoretical line takt), but actual throughput is determined by the bottleneck station (slowest station with highest takt)
+- **Root Cause**: In `plantFactory.ts`, stations get random fractions (0.7-0.999) of line takt, so bottleneck station determines actual capacity
+- **Fix Location**: [SimulationFlow.ts:1041-1045](src/app/SimulationFlow.ts#L1041-L1045)
+- **Solution**: Calculate bottleneck takt as `Math.max(...line.stations.map(s => s.taktMn + s.taktSg / 60))`
+
+**Issue 2: Shop OEE didn't account for parallel lines**
+- **Problem**: For shops with multiple parallel lines, `carsProduction` was SUM of all lines but `productionTime` was AVERAGE (single line capacity), causing OEE > 100%
+- **Fix Location**: [OEEFactory.ts:84-101](src/domain/factories/OEEFactory.ts#L84-L101)
+- **Solution**: Calculate `effectiveProductionTime = productionTime × numLines` to represent combined capacity of parallel lines
+
+**Issue 3: Duplicate shopLeadtimes entries**
+- **Problem**: `moveCarToNextStation` duplicated shopLeadtimes that were already created in `moverCarToFirstStation`
+- **Fix Location**: [CarService.ts:151-152](src/domain/services/CarService.ts#L151-L152)
+- **Solution**: Removed duplicate logic; shopLeadtimes are only created when car enters the first station
+
+### OEE Formula Reference
+
+```typescript
+// For LINE OEE:
+bottleneckTaktMn = Math.max(...line.stations.map(s => s.taktMn + s.taktSg / 60))
+diffTime = productionTime - (bottleneckTaktMn * carsProduction)
+oee = ((bottleneckTaktMn * carsProduction) / productionTime) * 100
+
+// For SHOP OEE (parallel lines):
+effectiveProductionTime = productionTime * numLines
+diffTime = effectiveProductionTime - (taktTime * carsProduction)
+oee = ((taktTime * carsProduction) / effectiveProductionTime) * 100
+```
 
 ---
 
 * If you are a IA or is a IA Claude Model by Anthropic, update this file always that you make a edit and get new informations about the project, change the architeture, logic and rules of the simulator. Read and do the command on file TIMELINE.md. Also, update the data change below:
 
-*Last updated: 2026-01-12 00:30:00*
+*Last updated: 2026-01-18 15:30:00*
+
+---

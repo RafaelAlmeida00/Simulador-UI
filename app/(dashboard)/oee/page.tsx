@@ -14,6 +14,11 @@ import {
   SelectValue,
 } from '@/src/components/ui/select';
 import { Label } from '@/src/components/ui/label';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/src/components/ui/tooltip';
 import { OEEChart, BarChart as RechartsBarChart } from '@/src/components/charts';
 import { StatsCard, DataTable, StatusBadge } from '@/src/components/data-display';
 import { DetailsDrawer } from '@/src/components/domain';
@@ -106,22 +111,48 @@ function HourTimeline({ slots }: { slots: HourSlot[] }) {
     }
   };
 
+  const getTypeLabel = (type: string) => {
+    switch (type) {
+      case 'random':
+        return 'Random';
+      case 'propagation':
+        return 'Propagation';
+      case 'planned':
+        return 'Planned';
+      default:
+        return 'OK';
+    }
+  };
+
   return (
     <div className="w-full overflow-hidden">
       <div className="flex gap-0.5 h-[140px]">
         {data.map((d) => (
-          <div key={d.name} className="flex-1 min-w-0 flex flex-col items-center h-full">
-            <div className="flex-1 w-full flex flex-col justify-end">
-              <motion.div
-                initial={{ height: 0 }}
-                animate={{ height: '100%' }}
-                transition={{ duration: 0.3 }}
-                className="w-full rounded-t-sm min-h-[20px]"
-                style={{ backgroundColor: getColor(d.type) }}
-              />
-            </div>
-            <span className="text-[8px] text-muted-foreground mt-0.5 truncate w-full text-center">{d.name}</span>
-          </div>
+          <Tooltip key={d.name}>
+            <TooltipTrigger asChild>
+              <div className="flex-1 min-w-0 flex flex-col items-center h-full cursor-pointer">
+                <div className="flex-1 w-full flex flex-col justify-end">
+                  <motion.div
+                    initial={{ height: 0 }}
+                    animate={{ height: '100%' }}
+                    transition={{ duration: 0.3 }}
+                    className="w-full rounded-t-sm min-h-[20px]"
+                    style={{ backgroundColor: getColor(d.type) }}
+                  />
+                </div>
+                <span className="text-[8px] text-muted-foreground mt-0.5 truncate w-full text-center">{d.name}</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="text-center">
+                <p className="font-medium">{d.name}</p>
+                <p className="text-xs">
+                  {d.value > 0 ? `${d.value} min perdidos` : 'Sem paradas'}
+                </p>
+                <p className="text-xs text-muted-foreground">{getTypeLabel(d.type)}</p>
+              </div>
+            </TooltipContent>
+          </Tooltip>
         ))}
       </div>
     </div>

@@ -17,9 +17,6 @@ import {
   Code,
   Folder,
   GitBranch,
-  Package,
-  ChevronDown,
-  ChevronRight,
   Palette,
   Car,
   Timer,
@@ -421,8 +418,10 @@ export default function SettingsPage() {
 
   const removeShop = (shopKey: string) => {
     setConfig((prev) => {
-      const { [shopKey]: _, ...restShops } = prev.shops;
-      const { [shopKey]: __, ...restOee } = prev.oeeTargets;
+      const restShops = { ...prev.shops };
+      delete restShops[shopKey];
+      const restOee = { ...prev.oeeTargets };
+      delete restOee[shopKey];
       return { ...prev, shops: restShops, oeeTargets: restOee };
     });
   };
@@ -464,7 +463,8 @@ export default function SettingsPage() {
 
   const removeLine = (shopKey: string, lineKey: string) => {
     setConfig((prev) => {
-      const { [lineKey]: _, ...restLines } = prev.shops[shopKey].lines;
+      const restLines = { ...prev.shops[shopKey].lines };
+      delete restLines[lineKey];
       return {
         ...prev,
         shops: {

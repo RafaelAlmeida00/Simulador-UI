@@ -3,7 +3,6 @@
 
 import type {
   OptimizedSocketMessage,
-  ChunkInfo,
   CachedPlantState,
   CachedShop,
   CachedLine,
@@ -21,8 +20,6 @@ import type {
   OEEDelta,
   MTTRMTBFDelta,
   FlatArrayDelta,
-  ChannelState,
-  DeltaChannelName,
 } from '../types/delta';
 
 import type {
@@ -31,7 +28,6 @@ import type {
   ICar,
   OEEDataEmit,
   MTTRMTBFData,
-  HealthData,
   PlantSnapshot,
   IShop,
   ILine,

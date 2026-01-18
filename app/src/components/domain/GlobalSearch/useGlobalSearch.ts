@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { simulatorStore } from '@/src/stores/simulatorStore';
 import { buildSearchIndex, filterResults, groupResultsByCategory } from '@/src/utils/searchUtils';
 import type { SearchIndex } from '@/src/types/search';
@@ -8,25 +8,24 @@ import { CATEGORY_ORDER } from '@/src/types/search';
 
 export function useGlobalSearch(isOpen: boolean) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [index, setIndex] = useState<SearchIndex | null>(null);
 
-  // Build index when dialog opens (snapshot approach)
+  // Build index during render (derived from isOpen state)
+  const index = useMemo<SearchIndex | null>(() => {
+    if (!isOpen) return null;
+    const snapshot = simulatorStore.getSnapshot();
+    return buildSearchIndex(snapshot);
+  }, [isOpen]);
+
+  // Track previous open state to reset search term when closing
+  // This effect synchronizes component state with the dialog open/close lifecycle
+  const wasOpenRef = useRef(isOpen);
   useEffect(() => {
-    if (isOpen) {
-      const snapshot = simulatorStore.getSnapshot();
-      const newIndex = buildSearchIndex(snapshot);
-      setIndex(newIndex);
-    } else {
-      // Reset on close
+    if (wasOpenRef.current && !isOpen) {
+      // Dialog just closed - reset search term for next open
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSearchTerm('');
-      setIndex(null);
     }
-
-    // Cleanup on unmount
-    return () => {
-      setSearchTerm('');
-      setIndex(null);
-    };
+    wasOpenRef.current = isOpen;
   }, [isOpen]);
 
   // Filter results based on search term

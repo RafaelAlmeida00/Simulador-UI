@@ -8,7 +8,7 @@ import { Badge } from '@/src/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/src/components/ui/tooltip';
 import { cn } from '@/src/lib/utils';
 import type { NormalizedStation } from '../../utils/plantNormalize';
-import type { ICar, ICarTrace } from '../../types/socket';
+import type { ICar } from '../../types/socket';
 import { formatEpochMs } from '../../utils/timeFormat';
 
 // Helper to extract ICar data from unknown
@@ -35,9 +35,6 @@ export interface StationCardProps {
 
 export const StationCard = React.memo(function StationCard({
   station,
-  shopName,
-  lineName,
-  nowSimMs,
   onStationClick,
   onCarClick,
 }: StationCardProps) {
@@ -67,26 +64,6 @@ export const StationCard = React.memo(function StationCard({
         badge: 'success' as const,
         text: 'Livre',
       };
-
-  // Calculate elapsed time from car trace
-  const elapsedSec = React.useMemo(() => {
-    if (!car || !nowSimMs) return 0;
-    const trace = car.trace;
-    if (!Array.isArray(trace)) return 0;
-
-    const stationName = station.name ?? station.id;
-    const enterTs = trace.find((t: ICarTrace) => {
-      return (
-        (t.line === lineName || t.line === station.id) &&
-        (t.station === stationName || t.station === station.id)
-      );
-    });
-
-    const enterMs = enterTs?.enter;
-    if (typeof enterMs !== 'number' || !Number.isFinite(enterMs)) return 0;
-
-    return Math.max(0, Math.floor((nowSimMs - enterMs) / 1000));
-  }, [car, nowSimMs, lineName, station.name, station.id]);
 
   const handleClick = React.useCallback(
     (e: React.MouseEvent) => {

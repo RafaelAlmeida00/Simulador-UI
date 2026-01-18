@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { useSimulatorSelector } from './useSimulatorStore';
 import { useNotificationStore } from '@/src/stores/notificationStore';
-import type { IStopLine, IBuffer, OEEDataEmit, HealthData } from '@/src/types/socket';
+import type { IStopLine, HealthData } from '@/src/types/socket';
 
 // Configuration for notification rules
 const CONFIG = {

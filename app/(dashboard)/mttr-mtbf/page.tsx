@@ -9,10 +9,6 @@ import {
   CircuitBoard,
   Filter,
   X,
-  CheckCircle,
-  AlertCircle,
-  AlertTriangle,
-  XCircle,
   Timer,
   Zap,
 } from 'lucide-react';
@@ -73,19 +69,6 @@ type StationRow = {
   mtbf: number;
   percentUntilMtbf: number;
 };
-
-function MtbfStatusIcon({ percentage }: { percentage: number }) {
-  if (percentage <= 20) {
-    return <CheckCircle className="h-5 w-5 text-success" />;
-  }
-  if (percentage <= 50) {
-    return <AlertCircle className="h-5 w-5 text-muted-foreground" />;
-  }
-  if (percentage <= 70) {
-    return <AlertTriangle className="h-5 w-5 text-warning" />;
-  }
-  return <XCircle className="h-5 w-5 text-destructive" />;
-}
 
 function MtbfStatusBadge({ percentage }: { percentage: number }) {
   if (percentage <= 20) {
@@ -324,7 +307,7 @@ export default function MttrMtbfPage() {
       key: 'percentUntilMtbf',
       header: '% ate MTBF',
       sortable: true,
-      render: (value: unknown, row: StationRow) => (
+      render: (value: unknown) => (
         <div className="flex items-center gap-2">
           <Progress
             value={Number(value)}

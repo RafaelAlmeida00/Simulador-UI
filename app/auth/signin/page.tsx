@@ -15,7 +15,7 @@ import { LoadingModal } from '@/src/components/feedback';
 function SignInContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') || '/';
+  const callbackUrl = searchParams.get('callbackUrl') || '/sessions';
   const error = searchParams.get('error');
 
   const [email, setEmail] = React.useState('');

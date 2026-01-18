@@ -347,8 +347,10 @@ export function settingsReducer(state: SettingsState, action: SettingsAction): S
       };
 
     case 'REMOVE_SHOP': {
-      const { [action.shopKey]: _, ...restShops } = state.config.shops;
-      const { [action.shopKey]: __, ...restOee } = state.config.oeeTargets;
+      const restShops = { ...state.config.shops };
+      delete restShops[action.shopKey];
+      const restOee = { ...state.config.oeeTargets };
+      delete restOee[action.shopKey];
       return {
         ...state,
         config: { ...state.config, shops: restShops, oeeTargets: restOee },
@@ -393,7 +395,8 @@ export function settingsReducer(state: SettingsState, action: SettingsAction): S
     }
 
     case 'REMOVE_LINE': {
-      const { [action.lineKey]: _, ...restLines } = state.config.shops[action.shopKey].lines;
+      const restLines = { ...state.config.shops[action.shopKey].lines };
+      delete restLines[action.lineKey];
       return {
         ...state,
         config: {

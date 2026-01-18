@@ -78,8 +78,11 @@ function addSecurityHeaders(response: NextResponse): NextResponse {
 // Route Configuration
 // ============================================
 
-// Routes that require authentication
-const protectedRoutes = [
+// Session cookie name (must match sessionStore.ts COOKIE_NAME)
+const SESSION_COOKIE_NAME = 'current-session-id';
+
+// Dashboard routes that require both auth AND a selected session
+const dashboardRoutes = [
   '/',
   '/oee',
   '/mttr-mtbf',
@@ -90,11 +93,14 @@ const protectedRoutes = [
   '/health-simulator',
 ];
 
-// Routes that should redirect to home if already authenticated
+// Routes that require auth but NOT a session (session selection page)
+const authOnlyRoutes = ['/sessions'];
+
+// Routes that should redirect to sessions if already authenticated
 const authRoutes = ['/auth/signin', '/auth/register'];
 
 // Public routes (always accessible)
-const publicRoutes = ['/api/auth', '/api/health'];
+const publicRoutes = ['/api/auth', '/api/health', '/api/sessions'];
 
 // ============================================
 // Middleware Handler
@@ -127,19 +133,42 @@ export async function middleware(request: NextRequest) {
   // Check if accessing auth routes while authenticated
   if (authRoutes.some((route) => pathname.startsWith(route))) {
     if (isAuthenticated) {
-      const redirectResponse = NextResponse.redirect(new URL('/', request.url));
+      // Redirect to sessions page instead of dashboard
+      const redirectResponse = NextResponse.redirect(new URL('/sessions', request.url));
       return addSecurityHeaders(redirectResponse);
     }
     const response = NextResponse.next();
     return addSecurityHeaders(response);
   }
 
-  // Check if accessing protected routes without authentication
-  if (protectedRoutes.some((route) => pathname === route || pathname.startsWith(route + '/'))) {
+  // Check if accessing auth-only routes (sessions page)
+  if (authOnlyRoutes.some((route) => pathname === route || pathname.startsWith(route + '/'))) {
     if (!isAuthenticated) {
       const signInUrl = new URL('/auth/signin', request.url);
       signInUrl.searchParams.set('callbackUrl', pathname);
       const redirectResponse = NextResponse.redirect(signInUrl);
+      return addSecurityHeaders(redirectResponse);
+    }
+    // User is authenticated, allow access to sessions page
+    const response = NextResponse.next();
+    return addSecurityHeaders(response);
+  }
+
+  // Check if accessing dashboard routes
+  if (dashboardRoutes.some((route) => pathname === route || pathname.startsWith(route + '/'))) {
+    // First check authentication
+    if (!isAuthenticated) {
+      const signInUrl = new URL('/auth/signin', request.url);
+      signInUrl.searchParams.set('callbackUrl', pathname);
+      const redirectResponse = NextResponse.redirect(signInUrl);
+      return addSecurityHeaders(redirectResponse);
+    }
+
+    // Then check if session is selected (via cookie)
+    const sessionCookie = request.cookies.get(SESSION_COOKIE_NAME);
+    if (!sessionCookie?.value) {
+      // No session selected, redirect to sessions page
+      const redirectResponse = NextResponse.redirect(new URL('/sessions', request.url));
       return addSecurityHeaders(redirectResponse);
     }
   }

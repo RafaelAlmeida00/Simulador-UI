@@ -14,8 +14,11 @@ import {
   Wifi,
   Play,
   Pause,
-  RotateCcw,
   Square,
+  Loader2,
+  Folder,
+  Gauge,
+  Calendar,
 } from 'lucide-react';
 import { Card } from '@/src/components/ui/card';
 import { Badge } from '@/src/components/ui/badge';
@@ -28,15 +31,16 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/src/components/ui/too
 import { StatsCard, StatusBadge } from '@/src/components/data-display';
 import { EmptyState } from '@/src/components/feedback';
 import http from '@/src/utils/http';
-import {
-  getSubscribedRooms,
-  getSubscribedRoomsCount,
-  sendSimulatorControl,
-  type SimulatorAction,
-  type ControlSimulatorResponse,
-} from '@/src/utils/socket';
+import { getSubscribedRoomsCount } from '@/src/utils/socket';
 import { isDatabaseConnected } from '@/src/utils/databaseStatus';
 import { useSimulatorSelector } from '@/src/hooks/useSimulatorStore';
+import {
+  useSessionStore,
+  selectCurrentSessionId,
+  selectSessionStatus,
+} from '@/src/stores/sessionStore';
+import { useSessionControl, useSession } from '@/src/hooks/useSessionsQuery';
+import type { SessionControlPayload } from '@/src/types/session';
 import { cn } from '@/src/lib/utils';
 
 // Memory constants
@@ -73,15 +77,33 @@ export default function HealthSimulatorPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [data, setData] = React.useState<HealthResponse | null>(null);
   const [lastUpdate, setLastUpdate] = React.useState<Date | null>(null);
-  const [controlLoading, setControlLoading] = React.useState(false);
   const [controlFeedback, setControlFeedback] = React.useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // Get real-time status from store
   const health = useSimulatorSelector((s) => s.health);
   const connected = useSimulatorSelector((s) => s.connected);
 
-  // Get simulator status from real-time health data
-  const simulatorStatus = health?.data?.simulatorStatus ?? 'stopped';
+  // Session state for control actions
+  const currentSessionId = useSessionStore(selectCurrentSessionId);
+  const sessionStatus = useSessionStore(selectSessionStatus);
+
+  // Session control mutation
+  const { mutate: controlSession, isPending: controlLoading } = useSessionControl();
+
+  // Fetch session details from API
+  const { data: sessionDetails, isLoading: sessionLoading } = useSession(currentSessionId);
+
+  // Get simulator status: prefer session status, fallback to health data
+  const simulatorStatus = React.useMemo(() => {
+    if (sessionStatus && sessionStatus !== 'idle') {
+      return sessionStatus as 'running' | 'paused' | 'stopped' | 'idle';
+    }
+    const healthStatus = health?.data?.simulatorStatus;
+    if (healthStatus === 'running' || healthStatus === 'paused' || healthStatus === 'stopped') {
+      return healthStatus;
+    }
+    return 'stopped';
+  }, [sessionStatus, health?.data?.simulatorStatus]);
 
   const fetchHealth = React.useCallback(async () => {
     try {
@@ -113,24 +135,45 @@ export default function HealthSimulatorPage() {
     return () => window.removeEventListener('keydown', handler);
   }, [loading, fetchHealth]);
 
-  // Handle simulator control
-  const handleSimulatorControl = React.useCallback((action: SimulatorAction) => {
-    setControlLoading(true);
-    setControlFeedback(null);
-
-    sendSimulatorControl(action, (response: ControlSimulatorResponse) => {
-      setControlLoading(false);
-      if (response.success) {
-        setControlFeedback({ message: `Comando "${action}" executado com sucesso`, type: 'success' });
-        // Refresh health data after control action
-        setTimeout(() => fetchHealth(), 500);
-      } else {
-        setControlFeedback({ message: response.error ?? 'Erro ao executar comando', type: 'error' });
+  // Handle simulator control via session API
+  const handleSimulatorControl = React.useCallback(
+    (action: 'start' | 'pause' | 'stop') => {
+      if (!currentSessionId) {
+        setControlFeedback({ message: 'Nenhuma sessao selecionada', type: 'error' });
+        setTimeout(() => setControlFeedback(null), 3000);
+        return;
       }
-      // Clear feedback after 3 seconds
-      setTimeout(() => setControlFeedback(null), 3000);
-    });
-  }, [fetchHealth]);
+
+      setControlFeedback(null);
+
+      // Map 'start' when paused to 'resume' for API compatibility
+      let apiAction: SessionControlPayload['action'] = action;
+      if (action === 'start' && sessionStatus === 'paused') {
+        apiAction = 'resume';
+      }
+
+      controlSession(
+        { sessionId: currentSessionId, action: apiAction },
+        {
+          onSuccess: () => {
+            setControlFeedback({ message: `Comando "${action}" executado com sucesso`, type: 'success' });
+            // Refresh health data after control action
+            setTimeout(() => fetchHealth(), 500);
+            // Clear feedback after 3 seconds
+            setTimeout(() => setControlFeedback(null), 3000);
+          },
+          onError: (error) => {
+            setControlFeedback({
+              message: error instanceof Error ? error.message : 'Erro ao executar comando',
+              type: 'error',
+            });
+            setTimeout(() => setControlFeedback(null), 3000);
+          },
+        }
+      );
+    },
+    [currentSessionId, sessionStatus, controlSession, fetchHealth]
+  );
 
   // Determine overall status
   const healthData = React.useMemo((): HealthData | null => {
@@ -174,7 +217,6 @@ export default function HealthSimulatorPage() {
 
   // Get WebSocket rooms info
   const wsRoomsCount = getSubscribedRoomsCount();
-  const wsRoomsList = getSubscribedRooms().join(', ');
 
   // Get database status from global state
   const dbConnected = isDatabaseConnected();
@@ -329,81 +371,86 @@ export default function HealthSimulatorPage() {
                   'ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1',
                   simulatorStatus === 'running' && 'bg-success/20 text-success',
                   simulatorStatus === 'paused' && 'bg-warning/20 text-warning',
-                  simulatorStatus === 'stopped' && 'bg-destructive/20 text-destructive'
+                  simulatorStatus === 'stopped' && 'bg-destructive/20 text-destructive',
+                  simulatorStatus === 'idle' && 'bg-secondary text-muted-foreground'
                 )}>
                   {simulatorStatus === 'running' && <Play className="h-3 w-3" />}
                   {simulatorStatus === 'paused' && <Pause className="h-3 w-3" />}
                   {simulatorStatus === 'stopped' && <Square className="h-3 w-3" />}
+                  {simulatorStatus === 'idle' && <Clock className="h-3 w-3" />}
                   <span className="text-xs font-medium capitalize">
-                    {simulatorStatus}
+                    {simulatorStatus === 'idle' ? 'Aguardando' : simulatorStatus}
                   </span>
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-3">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant={simulatorStatus === 'running' ? 'success' : 'outline'}
-                      size="sm"
-                      onClick={() => handleSimulatorControl('start')}
-                      disabled={controlLoading || simulatorStatus === 'running'}
-                      className="gap-2"
-                    >
-                      <Play className="h-4 w-4" />
-                      Iniciar
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Iniciar simulacao</TooltipContent>
-                </Tooltip>
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Start/Resume button - show when idle, stopped, or paused */}
+                {(simulatorStatus === 'idle' || simulatorStatus === 'stopped' || simulatorStatus === 'paused') && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant={simulatorStatus === 'paused' ? 'success' : 'outline'}
+                        size="sm"
+                        onClick={() => handleSimulatorControl('start')}
+                        disabled={controlLoading}
+                        className="gap-2"
+                      >
+                        <Play className="h-4 w-4" />
+                        {simulatorStatus === 'paused' ? 'Continuar' : 'Iniciar'}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {simulatorStatus === 'paused' ? 'Continuar simulacao' : 'Iniciar simulacao'}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
 
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant={simulatorStatus === 'paused' ? 'warning' : 'outline'}
-                      size="sm"
-                      onClick={() => handleSimulatorControl('pause')}
-                      disabled={controlLoading || simulatorStatus !== 'running'}
-                      className="gap-2"
-                    >
-                      <Pause className="h-4 w-4" />
-                      Pausar
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Pausar simulacao</TooltipContent>
-                </Tooltip>
+                {/* Pause button - show when running */}
+                {simulatorStatus === 'running' && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="warning"
+                        size="sm"
+                        onClick={() => handleSimulatorControl('pause')}
+                        disabled={controlLoading}
+                        className="gap-2"
+                      >
+                        <Pause className="h-4 w-4" />
+                        Pausar
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Pausar simulacao</TooltipContent>
+                  </Tooltip>
+                )}
 
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleSimulatorControl('restart')}
-                      disabled={controlLoading}
-                      className="gap-2"
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                      Reiniciar
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Reiniciar simulacao do zero</TooltipContent>
-                </Tooltip>
+                {/* Stop button - show when running or paused */}
+                {(simulatorStatus === 'running' || simulatorStatus === 'paused') && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleSimulatorControl('stop')}
+                        disabled={controlLoading}
+                        className="gap-2 hover:text-destructive hover:border-destructive"
+                      >
+                        <Square className="h-4 w-4" />
+                        Parar
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Parar simulacao</TooltipContent>
+                  </Tooltip>
+                )}
 
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleSimulatorControl('stop')}
-                      disabled={controlLoading || simulatorStatus === 'stopped'}
-                      className="gap-2 hover:text-destructive hover:border-destructive"
-                    >
-                      <Square className="h-4 w-4" />
-                      Parar
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Parar simulacao</TooltipContent>
-                </Tooltip>
+                {/* Loading indicator */}
+                {controlLoading && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span className="text-sm">Processando...</span>
+                  </div>
+                )}
               </div>
 
               {controlFeedback && (
@@ -419,6 +466,84 @@ export default function HealthSimulatorPage() {
                   {controlFeedback.message}
                 </motion.div>
               )}
+            </Card>
+          </motion.div>
+
+          {/* Session Details Card */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.13 }}
+          >
+            <Card className="p-4">
+              <div className="flex items-center gap-2 mb-4">
+                <Folder className="h-5 w-5 text-primary" />
+                <h3 className="font-semibold">Detalhes da Sessao</h3>
+                {sessionLoading && (
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground ml-auto" />
+                )}
+              </div>
+
+              {sessionDetails ? (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Folder className="h-3 w-3" /> Nome
+                    </span>
+                    <p className="font-medium text-sm truncate">
+                      {sessionDetails.name || `Sessao #${sessionDetails.id.slice(0, 8)}`}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Gauge className="h-3 w-3" /> Velocidade
+                    </span>
+                    <p className="font-medium text-sm">
+                      {sessionDetails.speedFactor}x
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Clock className="h-3 w-3" /> Duracao
+                    </span>
+                    <p className="font-medium text-sm">
+                      {sessionDetails.durationDays} {sessionDetails.durationDays === 1 ? 'dia' : 'dias'}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Calendar className="h-3 w-3" /> Criada em
+                    </span>
+                    <p className="font-medium text-sm">
+                      {new Date(sessionDetails.createdAt).toLocaleDateString('pt-BR')}
+                    </p>
+                  </div>
+                  {sessionDetails.startedAt && (
+                    <div className="space-y-1">
+                      <span className="text-xs text-muted-foreground flex items-center gap-1">
+                        <Play className="h-3 w-3" /> Iniciada em
+                      </span>
+                      <p className="font-medium text-sm">
+                        {new Date(sessionDetails.startedAt).toLocaleString('pt-BR')}
+                      </p>
+                    </div>
+                  )}
+                  {sessionDetails.expiresAt && (
+                    <div className="space-y-1">
+                      <span className="text-xs text-muted-foreground flex items-center gap-1">
+                        <Clock className="h-3 w-3" /> Expira em
+                      </span>
+                      <p className="font-medium text-sm">
+                        {new Date(sessionDetails.expiresAt).toLocaleString('pt-BR')}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : !sessionLoading ? (
+                <p className="text-sm text-muted-foreground">
+                  Nenhuma sessao selecionada ou dados indisponiveis.
+                </p>
+              ) : null}
             </Card>
           </motion.div>
 

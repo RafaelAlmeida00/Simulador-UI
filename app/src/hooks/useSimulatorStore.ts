@@ -9,8 +9,10 @@ export function useSimulatorSelector<T>(selector: (state: SimulatorState) => T):
   const prevStateRef = React.useRef<SimulatorState | null>(null);
   const prevResultRef = React.useRef<T | null>(null);
 
-  // Atualiza o ref do selector a cada render (sem causar re-subscription)
-  selectorRef.current = selector;
+  // Atualiza o ref do selector em layout effect (mantém sincronizado sem re-subscription)
+  React.useLayoutEffect(() => {
+    selectorRef.current = selector;
+  });
 
   const getSnapshot = React.useCallback(() => {
     const currentState = simulatorStore.getSnapshot();

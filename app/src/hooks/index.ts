@@ -7,6 +7,12 @@ export * from './useSimulatorStore';
 export * from './useEventsQuery';
 export * from './useStopsQuery';
 export * from './useOEEQuery';
+export * from './useSessionsQuery';
+export * from './useConfigsQuery';
+
+// Session Management
+export * from './useSessionGuard';
+export * from './useSessionSocket';
 
 // Notification Engine
 export * from './useNotificationEngine';

@@ -10,10 +10,10 @@ import {
   WifiOff,
   Play,
   Pause,
-  RotateCcw,
   Square,
   Clock,
   Calendar,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { Button } from '@/src/components/ui/button';
@@ -43,8 +43,9 @@ const pageTitles: Record<string, string> = {
 interface HeaderProps {
   connected?: boolean;
   simulatorTime?: number | null;
-  simulatorStatus?: 'running' | 'paused' | 'stopped';
-  onSimulatorControl?: (action: 'start' | 'pause' | 'restart' | 'stop') => void;
+  simulatorStatus?: 'running' | 'paused' | 'stopped' | 'idle';
+  onSimulatorControl?: (action: 'start' | 'pause' | 'stop') => void;
+  controlPending?: boolean;
 }
 
 export function Header({
@@ -52,6 +53,7 @@ export function Header({
   simulatorTime,
   simulatorStatus = 'stopped',
   onSimulatorControl,
+  controlPending = false,
 }: HeaderProps) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
@@ -129,14 +131,16 @@ export function Header({
                   'flex items-center gap-1.5 rounded-full px-2.5 py-1',
                   simulatorStatus === 'running' && 'bg-success/20 text-success',
                   simulatorStatus === 'paused' && 'bg-warning/20 text-warning',
-                  simulatorStatus === 'stopped' && 'bg-destructive/20 text-destructive'
+                  simulatorStatus === 'stopped' && 'bg-destructive/20 text-destructive',
+                  simulatorStatus === 'idle' && 'bg-secondary text-muted-foreground'
                 )}
               >
                 {simulatorStatus === 'running' && <Play className="h-3 w-3" />}
                 {simulatorStatus === 'paused' && <Pause className="h-3 w-3" />}
                 {simulatorStatus === 'stopped' && <Square className="h-3 w-3" />}
+                {simulatorStatus === 'idle' && <Clock className="h-3 w-3" />}
                 <span className="text-xs font-medium capitalize">
-                  {simulatorStatus}
+                  {simulatorStatus === 'idle' ? 'Aguardando' : simulatorStatus}
                 </span>
               </div>
             </TooltipTrigger>
@@ -146,61 +150,67 @@ export function Header({
           {/* Simulator Controls */}
           {onSimulatorControl && (
             <div className="flex items-center gap-1 rounded-lg bg-secondary p-1">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant={simulatorStatus === 'running' ? 'success' : 'ghost'}
-                    size="icon-sm"
-                    onClick={() => onSimulatorControl('start')}
-                    disabled={simulatorStatus === 'running'}
-                  >
-                    <Play className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Iniciar</TooltipContent>
-              </Tooltip>
+              {/* Start/Resume button - show when idle, stopped, or paused */}
+              {(simulatorStatus === 'idle' || simulatorStatus === 'stopped' || simulatorStatus === 'paused') && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={simulatorStatus === 'paused' ? 'success' : 'ghost'}
+                      size="icon-sm"
+                      onClick={() => onSimulatorControl('start')}
+                      disabled={controlPending}
+                      className="cursor-pointer hover:bg-success/20"
+                    >
+                      <Play className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {simulatorStatus === 'paused' ? 'Continuar' : 'Iniciar'}
+                  </TooltipContent>
+                </Tooltip>
+              )}
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant={simulatorStatus === 'paused' ? 'warning' : 'ghost'}
-                    size="icon-sm"
-                    onClick={() => onSimulatorControl('pause')}
-                    disabled={simulatorStatus !== 'running'}
-                  >
-                    <Pause className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Pausar</TooltipContent>
-              </Tooltip>
+              {/* Pause button - show when running */}
+              {simulatorStatus === 'running' && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="warning"
+                      size="icon-sm"
+                      onClick={() => onSimulatorControl('pause')}
+                      disabled={controlPending}
+                    >
+                      <Pause className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Pausar</TooltipContent>
+                </Tooltip>
+              )}
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => onSimulatorControl('restart')}
-                  >
-                    <RotateCcw className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Reiniciar</TooltipContent>
-              </Tooltip>
+              {/* Stop button - show when running or paused */}
+              {(simulatorStatus === 'running' || simulatorStatus === 'paused') && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => onSimulatorControl('stop')}
+                      disabled={controlPending}
+                      className="hover:text-destructive"
+                    >
+                      <Square className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Parar</TooltipContent>
+                </Tooltip>
+              )}
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => onSimulatorControl('stop')}
-                    disabled={simulatorStatus === 'stopped'}
-                    className="hover:text-destructive"
-                  >
-                    <Square className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Parar</TooltipContent>
-              </Tooltip>
+              {/* Loading indicator */}
+              {controlPending && (
+                <div className="px-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              )}
             </div>
           )}
         </div>

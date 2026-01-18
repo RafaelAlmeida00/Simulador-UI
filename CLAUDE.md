@@ -2654,6 +2654,11 @@ export * from './useSimulatorStore';
 export * from './useEventsQuery';
 export * from './useStopsQuery';
 export * from './useOEEQuery';
+export * from './useSessionsQuery';    // Session CRUD + control
+
+// Session Hooks
+export * from './useSessionGuard';      // Dashboard validation
+export * from './useSessionSocket';     // Socket session:join/leave
 
 // Notification Engine
 export * from './useNotificationEngine';
@@ -2662,7 +2667,16 @@ export * from './useNotificationEngine';
 export * from './useKeyboardShortcut';
 ```
 
-### 35.2 Adicionar Novo Hook
+### 35.2 Providers Export
+
+```typescript
+// components/providers/index.ts
+export * from './SessionProvider';
+export * from './SessionChannelProvider';
+export * from './QueryProvider';
+```
+
+### 35.3 Adicionar Novo Hook
 
 ```typescript
 // 1. Criar hook em hooks/useNewHook.ts
@@ -2670,6 +2684,765 @@ export function useNewHook() { /* ... */ }
 
 // 2. Adicionar export em hooks/index.ts
 export * from './useNewHook';
+```
+
+---
+
+## 36. Sistema de Sessoes (Session Management)
+
+Sistema completo de gerenciamento de sessoes de simulacao, permitindo multiplas sessoes por usuario com controle de estado, recovery e limites.
+
+### 36.1 Arquitetura
+
+```
+app/
+├── sessions/                    # Pagina de gerenciamento (fora do dashboard)
+│   ├── layout.tsx               # Layout simples sem sidebar
+│   └── page.tsx                 # Tela principal de sessoes
+└── src/
+    ├── stores/
+    │   ├── sessionStore.ts      # Zustand store com persist + cookie
+    │   └── simulatorStore.ts    # Store de dados do simulador (com reset())
+    ├── hooks/
+    │   ├── useSessionGuard.ts   # Validacao de sessao no dashboard
+    │   ├── useSessionSocket.ts  # Socket session:join/leave + status
+    │   └── useSessionsQuery.ts  # React Query hooks para API (inclui useSessionControl)
+    ├── components/
+    │   ├── providers/
+    │   │   └── SessionChannelProvider.tsx  # WebSocket session-scoped channels
+    │   └── domain/
+    │       ├── SessionCard.tsx      # Card de sessao com status e acoes
+    │       └── CreateSessionDialog.tsx # Modal de criacao
+    └── types/
+        └── session.ts           # Types TypeScript (SessionControlPayload)
+```
+
+### 36.2 Fluxo de Navegacao
+
+```
+Login → /sessions (selecao) → Dashboard (com sessao)
+                ↑
+         "Trocar Sessao" (UserMenu)
+```
+
+**Middleware Protection:**
+- Rotas do dashboard requerem auth + cookie `current-session-id`
+- Rota `/sessions` requer apenas auth
+- Sem cookie de sessao → redirect para `/sessions`
+
+### 36.3 Session Store (Zustand)
+
+```typescript
+// stores/sessionStore.ts
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+
+// Cookie sync para middleware
+const COOKIE_NAME = 'current-session-id';
+
+export interface SessionMetadata {
+  id: string;
+  name: string | null;
+  status: SessionStatus;
+}
+
+interface SessionState {
+  currentSessionId: string | null;
+  sessionMetadata: SessionMetadata | null;
+  socketConnected: boolean;
+  isHydrated: boolean;
+}
+
+interface SessionActions {
+  setSession: (session: Session) => void;
+  clearSession: () => void;
+  updateSessionStatus: (status: SessionStatus) => void;
+  setSocketConnected: (connected: boolean) => void;
+  setHydrated: () => void;
+}
+
+export const useSessionStore = create<SessionState & SessionActions>()(
+  persist(
+    (set) => ({
+      currentSessionId: null,
+      sessionMetadata: null,
+      socketConnected: false,
+      isHydrated: false,
+
+      setSession: (session) => {
+        // Set cookie for middleware
+        document.cookie = `${COOKIE_NAME}=${session.id}; path=/; max-age=31536000; SameSite=Lax`;
+        set({
+          currentSessionId: session.id,
+          sessionMetadata: {
+            id: session.id,
+            name: session.name,
+            status: session.status,
+          },
+        });
+      },
+
+      clearSession: () => {
+        // Remove cookie
+        document.cookie = `${COOKIE_NAME}=; path=/; max-age=0`;
+        set({ currentSessionId: null, sessionMetadata: null });
+      },
+
+      updateSessionStatus: (status) =>
+        set((state) => ({
+          sessionMetadata: state.sessionMetadata
+            ? { ...state.sessionMetadata, status }
+            : null,
+        })),
+
+      setSocketConnected: (connected) => set({ socketConnected: connected }),
+      setHydrated: () => set({ isHydrated: true }),
+    }),
+    {
+      name: 'session-store',
+      partialize: (state) => ({
+        currentSessionId: state.currentSessionId,
+        sessionMetadata: state.sessionMetadata,
+      }),
+      onRehydrateStorage: () => (state) => {
+        // Sync cookie on rehydrate
+        if (state?.currentSessionId) {
+          document.cookie = `${COOKIE_NAME}=${state.currentSessionId}; path=/; max-age=31536000; SameSite=Lax`;
+        }
+        state?.setHydrated();
+      },
+    }
+  )
+);
+
+// Selectors para performance
+export const selectCurrentSessionId = (s: SessionState) => s.currentSessionId;
+export const selectSessionMetadata = (s: SessionState) => s.sessionMetadata;
+export const selectIsHydrated = (s: SessionState) => s.isHydrated;
+```
+
+### 36.4 Types
+
+```typescript
+// types/session.ts
+export type SessionStatus =
+  | 'idle'        // Criada, nao iniciada
+  | 'running'     // Em execucao
+  | 'paused'      // Pausada pelo usuario
+  | 'stopped'     // Parada definitiva
+  | 'expired'     // Tempo esgotado
+  | 'interrupted'; // Interrompida (reconexao possivel)
+
+export interface Session {
+  id: string;
+  name: string | null;
+  status: SessionStatus;
+  durationDays: number;
+  speedFactor: number;
+  createdAt: string;
+  startedAt: string | null;
+  expiresAt: string | null;
+  interruptedAt: string | null;  // Para calculo de recovery time
+}
+
+export interface SessionLimits {
+  maxPerUser: number;
+  maxGlobal: number;
+  currentUser: number;
+  currentGlobal: number;
+}
+
+export interface CreateSessionPayload {
+  name?: string;
+  configId?: string;          // ID da config de planta
+  durationDays: number;
+  speedFactor?: number;
+}
+
+export interface SessionControlPayload {
+  action: 'start' | 'pause' | 'resume' | 'stop';
+}
+
+export interface SessionStatusUpdate {
+  sessionId: string;
+  status: SessionStatus;
+  reason?: string;
+}
+```
+
+### 36.5 Hooks
+
+#### useSessionGuard
+
+Valida sessao selecionada no dashboard layout. Redireciona se invalida.
+
+```typescript
+// hooks/useSessionGuard.ts
+export function useSessionGuard(): {
+  sessionValid: boolean;
+  validating: boolean;
+} {
+  const currentSessionId = useSessionStore(selectCurrentSessionId);
+  const sessionMetadata = useSessionStore(selectSessionMetadata);
+  const isHydrated = useSessionStore(selectIsHydrated);
+  const router = useRouter();
+
+  // Aguarda hydration
+  if (!isHydrated) return { sessionValid: false, validating: true };
+
+  // Sem sessao selecionada
+  if (!currentSessionId) {
+    router.replace('/sessions');
+    return { sessionValid: false, validating: true };
+  }
+
+  // Sessao precisa de recovery
+  if (sessionMetadata?.status === 'interrupted') {
+    router.replace('/sessions');
+    return { sessionValid: false, validating: true };
+  }
+
+  // Sessao invalida (expired, stopped)
+  if (['expired', 'stopped'].includes(sessionMetadata?.status ?? '')) {
+    router.replace('/sessions');
+    return { sessionValid: false, validating: true };
+  }
+
+  return { sessionValid: true, validating: false };
+}
+```
+
+#### useSessionSocket
+
+Gerencia conexao socket para sessao atual.
+
+```typescript
+// hooks/useSessionSocket.ts
+export function useSessionSocket() {
+  const currentSessionId = useSessionStore(selectCurrentSessionId);
+  const isHydrated = useSessionStore(selectIsHydrated);
+  const setSocketConnected = useSessionStore((s) => s.setSocketConnected);
+  const updateSessionStatus = useSessionStore((s) => s.updateSessionStatus);
+
+  React.useEffect(() => {
+    if (!isHydrated || !currentSessionId) return;
+
+    const socket = getSocket();
+
+    // Entrar na sala da sessao
+    socket.emit('session:join', currentSessionId);
+    setSocketConnected(true);
+
+    // Ouvir mudancas de status
+    socket.on('session:status', (data: SessionStatusUpdate) => {
+      if (data.sessionId === currentSessionId) {
+        updateSessionStatus(data.status);
+      }
+    });
+
+    return () => {
+      socket.emit('session:leave', currentSessionId);
+      socket.off('session:status');
+      setSocketConnected(false);
+    };
+  }, [currentSessionId, isHydrated]);
+}
+```
+
+#### useSessionsQuery (React Query)
+
+```typescript
+// hooks/useSessionsQuery.ts
+export const sessionKeys = {
+  all: ['sessions'] as const,
+  lists: () => [...sessionKeys.all, 'list'] as const,
+  detail: (id: string) => [...sessionKeys.all, 'detail', id] as const,
+};
+
+// Listar sessoes do usuario
+export function useSessions() {
+  return useQuery({
+    queryKey: sessionKeys.lists(),
+    queryFn: async () => {
+      const res = await http.get<SessionsResponse>('/sessions');
+      return res.data;
+    },
+  });
+}
+
+// Criar sessao
+export function useCreateSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: CreateSessionPayload) =>
+      http.post<Session>('/sessions', payload),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: sessionKeys.lists() }),
+  });
+}
+
+// Controlar sessao (start/pause/resume)
+export function useSessionControl() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sessionId, action }: { sessionId: string; action: string }) =>
+      http.post(`/sessions/${sessionId}/control`, { action }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: sessionKeys.lists() }),
+  });
+}
+
+// Recuperar sessao interrompida
+export function useRecoverSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: string) =>
+      http.post(`/sessions/${sessionId}/recover`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: sessionKeys.lists() }),
+  });
+}
+
+// Descartar sessao interrompida
+export function useDiscardSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: string) =>
+      http.post(`/sessions/${sessionId}/discard`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: sessionKeys.lists() }),
+  });
+}
+
+// Deletar sessao
+export function useDeleteSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: string) =>
+      http.delete(`/sessions/${sessionId}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: sessionKeys.lists() }),
+  });
+}
+```
+
+### 36.6 SessionCard Component
+
+```typescript
+// components/domain/SessionCard.tsx
+interface SessionCardProps {
+  session: Session;
+  onOpen: () => void;
+  onControl: (action: 'start' | 'pause' | 'resume') => void;
+  onDelete: () => void;
+  onRecover: () => void;
+  onDiscard: () => void;
+}
+
+const statusConfig: Record<SessionStatus, { label: string; variant: string }> = {
+  idle: { label: 'Aguardando', variant: 'secondary' },
+  running: { label: 'Executando', variant: 'success' },
+  paused: { label: 'Pausada', variant: 'warning' },
+  stopped: { label: 'Parada', variant: 'destructive' },
+  expired: { label: 'Expirada', variant: 'destructive' },
+  interrupted: { label: 'Interrompida', variant: 'warning' },
+};
+```
+
+**Visual por Status:**
+- `idle`: Borda normal, botao "Iniciar"
+- `running`: Fundo verde sutil, botao "Pausar" + "Abrir"
+- `paused`: Fundo amarelo sutil, botao "Continuar" + "Abrir"
+- `stopped/expired`: Borda vermelha, apenas "Deletar"
+- `interrupted`: Borda amarela, area de alerta com tempo restante, botoes "Retomar" + "Descartar"
+
+**Tempo para Recovery:**
+```typescript
+const getTimeToRecover = () => {
+  if (!session.interruptedAt) return null;
+  const deadline = new Date(session.interruptedAt).getTime() + 24 * 60 * 60 * 1000;
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return 'Expirado';
+  const hours = Math.floor(remaining / (60 * 60 * 1000));
+  const minutes = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
+  return `${hours}h ${minutes}min`;
+};
+```
+
+### 36.7 Middleware Integration
+
+```typescript
+// middleware.ts
+const SESSION_COOKIE_NAME = 'current-session-id';
+
+// Rotas que requerem sessao selecionada
+const dashboardRoutes = ['/', '/oee', '/mttr-mtbf', '/stoppages', '/events', '/buffers', '/settings'];
+
+// Rotas que requerem apenas auth (sem sessao)
+const authOnlyRoutes = ['/sessions'];
+
+// Verificar cookie de sessao para rotas do dashboard
+if (dashboardRoutes.includes(pathname)) {
+  const sessionCookie = request.cookies.get(SESSION_COOKIE_NAME);
+  if (!sessionCookie?.value) {
+    return NextResponse.redirect(new URL('/sessions', request.url));
+  }
+}
+```
+
+### 36.8 API Endpoints
+
+| Metodo | Endpoint | Descricao |
+|--------|----------|-----------|
+| GET | `/api/sessions` | Lista sessoes do usuario + limites |
+| POST | `/api/sessions` | Cria nova sessao |
+| GET | `/api/sessions/:id` | Detalhes de uma sessao |
+| DELETE | `/api/sessions/:id` | Deleta sessao |
+| POST | `/api/sessions/:id/control` | Controla sessao (start/pause/resume/stop) |
+| POST | `/api/sessions/:id/recover` | Recupera sessao interrompida |
+| POST | `/api/sessions/:id/discard` | Descarta sessao interrompida |
+
+**Response de GET /sessions:**
+```typescript
+interface SessionsResponse {
+  sessions: Session[];
+  limits: SessionLimits;
+}
+```
+
+### 36.9 UserMenu - Trocar Sessao
+
+```typescript
+// components/layout/UserMenu.tsx
+import { ArrowLeftRight } from 'lucide-react';
+import { useSessionStore } from '@/src/stores/sessionStore';
+
+const { clearSession, sessionMetadata } = useSessionStore();
+
+const handleSwitchSession = () => {
+  clearSession();
+  router.push('/sessions');
+};
+
+// No JSX (apos outras opcoes):
+{sessionMetadata && (
+  <>
+    <DropdownMenuSeparator />
+    <DropdownMenuItem onClick={handleSwitchSession}>
+      <ArrowLeftRight className="mr-2 h-4 w-4" />
+      <span>Trocar Sessao</span>
+    </DropdownMenuItem>
+  </>
+)}
+```
+
+### 36.10 Dashboard Layout Integration
+
+O layout do dashboard usa um padrao de split em dois componentes para garantir que React Query hooks sejam usados dentro do QueryProvider.
+
+```typescript
+// app/(dashboard)/layout.tsx
+'use client';
+
+import { useSessionGuard } from '@/src/hooks/useSessionGuard';
+import { useSessionSocket } from '@/src/hooks/useSessionSocket';
+import { useSessionControl } from '@/src/hooks/useSessionsQuery';
+import { SessionChannelProvider } from '@/src/components/providers/SessionChannelProvider';
+import {
+  useSessionStore,
+  selectCurrentSessionId,
+  selectSessionStatus,
+} from '@/src/stores/sessionStore';
+
+// ─────────────────────────────────────────────────────────────
+// Inner Dashboard Content (uses React Query hooks)
+// ─────────────────────────────────────────────────────────────
+function DashboardContent({ children }: { children: React.ReactNode }) {
+  const currentSessionId = useSessionStore(selectCurrentSessionId);
+  const sessionStatus = useSessionStore(selectSessionStatus);
+  const { mutate: controlSession, isPending: controlPending } = useSessionControl();
+
+  const simHealth = useSimulatorSelector((s) => s.health);
+  const simConnect = useSimulatorSelector((s) => s.connected);
+
+  // Handle simulator control actions via REST API
+  const handleSimulatorControl = React.useCallback(
+    (action: 'start' | 'pause' | 'stop') => {
+      if (!currentSessionId) return;
+
+      // Map 'start' when paused to 'resume' for API compatibility
+      let apiAction: SessionControlPayload['action'] = action;
+      if (action === 'start' && sessionStatus === 'paused') {
+        apiAction = 'resume';
+      }
+
+      controlSession({ sessionId: currentSessionId, action: apiAction });
+    },
+    [currentSessionId, sessionStatus, controlSession]
+  );
+
+  // Derive display status from session or health
+  const displayStatus = React.useMemo(() => {
+    if (sessionStatus && sessionStatus !== 'idle') {
+      return sessionStatus as 'running' | 'paused' | 'stopped';
+    }
+    return simHealth?.data?.simulatorStatus ?? 'stopped';
+  }, [sessionStatus, simHealth?.data?.simulatorStatus]);
+
+  return (
+    <SessionChannelProvider>
+      <div className="flex h-screen bg-background">
+        <Sidebar />
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <Header
+            connected={simConnect}
+            simulatorTime={simHealth?.data?.simulatorTimestamp}
+            simulatorStatus={displayStatus}
+            onSimulatorControl={handleSimulatorControl}
+            controlPending={controlPending}
+          />
+          <main className="flex-1 overflow-auto">
+            <PageTransition>
+              <div className="p-6">{children}</div>
+            </PageTransition>
+          </main>
+        </div>
+      </div>
+    </SessionChannelProvider>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Main Layout Component (provides QueryProvider context)
+// ─────────────────────────────────────────────────────────────
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  // Session validation - MUST be called first, before other hooks
+  const { validating, sessionValid } = useSessionGuard();
+
+  // Session socket connection - only active when session is valid
+  useSessionSocket();
+
+  // Show skeleton while validating session
+  if (validating || !sessionValid) {
+    return <DashboardSkeleton />;
+  }
+
+  // IMPORTANT: QueryProvider must wrap DashboardContent
+  // because useSessionControl() uses React Query
+  return (
+    <QueryProvider>
+      <TooltipProvider>
+        <DashboardContent>{children}</DashboardContent>
+      </TooltipProvider>
+    </QueryProvider>
+  );
+}
+```
+
+### 36.11 Fluxo de Recovery
+
+```
+1. Servidor detecta desconexao → status = 'interrupted' + interruptedAt = now()
+2. Usuario tem 24h para recuperar
+3. Na tela /sessions:
+   - Card mostra borda warning + area de alerta
+   - Exibe tempo restante: "Xh Ymin para retomar"
+   - Botoes: [Retomar] [Descartar]
+4. Retomar → POST /recover → status = 'running' → abre dashboard
+5. Descartar → POST /discard → status = 'stopped'
+6. Apos 24h automaticamente → status = 'expired'
+```
+
+### 36.12 Checklist de Implementacao
+
+#### Store
+- [x] sessionStore com persist
+- [x] Cookie sync para middleware
+- [x] Selectors otimizados
+- [x] Actions: setSession, clearSession, updateSessionStatus
+
+#### Hooks
+- [x] useSessionGuard - validacao no dashboard
+- [x] useSessionSocket - conexao socket
+- [x] useSessionsQuery - React Query para CRUD
+
+#### Componentes
+- [x] SessionCard com todos os status
+- [x] CreateSessionDialog com config selector
+- [x] Dialogs de confirmacao (delete, discard)
+- [x] LoadingModal para acoes
+
+#### Integracao
+- [x] Middleware com cookie check
+- [x] Dashboard layout com guard + socket
+- [x] UserMenu com "Trocar Sessao"
+- [x] Sessions page fora do dashboard
+- [x] SessionChannelProvider para WebSocket session-scoped
+
+### 36.13 SessionChannelProvider
+
+Provider que gerencia subscricoes WebSocket session-scoped. Substitui as subscricoes globais por canais no formato `session:{sessionId}:{channel}`.
+
+```typescript
+// app/src/components/providers/SessionChannelProvider.tsx
+'use client';
+
+import * as React from 'react';
+import { throttle } from 'lodash-es';
+import { getSocket } from '@/src/utils/socket';
+import { simulatorStore } from '@/src/stores/simulatorStore';
+import {
+  useSessionStore,
+  selectCurrentSessionId,
+  selectIsHydrated,
+} from '@/src/stores/sessionStore';
+
+// Throttle config por canal (ms)
+const THROTTLE_CONFIG: Record<string, number> = {
+  plantstate: 100,
+  stops: 500,
+  buffers: 500,
+  health: 3000,
+  cars: 1000,
+  oee: 2000,
+  mttr_mtbf: 5000,
+};
+
+const SESSION_CHANNELS = [
+  'plantstate', 'stops', 'buffers', 'health', 'cars', 'oee', 'mttr_mtbf'
+] as const;
+
+export function SessionChannelProvider({ children }: { children: React.ReactNode }) {
+  const currentSessionId = useSessionStore(selectCurrentSessionId);
+  const isHydrated = useSessionStore(selectIsHydrated);
+  const prevSessionIdRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    if (!isHydrated || !currentSessionId) return;
+
+    // Clear data on session change
+    if (prevSessionIdRef.current && prevSessionIdRef.current !== currentSessionId) {
+      simulatorStore.reset();
+    }
+    prevSessionIdRef.current = currentSessionId;
+
+    const socket = getSocket();
+    const handlers: Record<string, ReturnType<typeof throttle>> = {};
+
+    // Subscribe to session-scoped channels
+    SESSION_CHANNELS.forEach((channel) => {
+      const sessionChannel = `session:${currentSessionId}:${channel}`;
+      const throttleMs = THROTTLE_CONFIG[channel] ?? 500;
+
+      handlers[channel] = throttle((payload: unknown) => {
+        switch (channel) {
+          case 'plantstate':
+            simulatorStore.setPlantState(payload as Parameters<typeof simulatorStore.setPlantState>[0]);
+            break;
+          case 'health':
+            simulatorStore.setHealth(payload as Parameters<typeof simulatorStore.setHealth>[0]);
+            break;
+          // ... outros canais
+        }
+      }, throttleMs, { leading: true, trailing: true });
+
+      socket.on(sessionChannel, handlers[channel]);
+      console.log(`[SessionChannel] Subscribed to ${sessionChannel}`);
+    });
+
+    return () => {
+      SESSION_CHANNELS.forEach((channel) => {
+        const sessionChannel = `session:${currentSessionId}:${channel}`;
+        if (handlers[channel]) {
+          handlers[channel].cancel();
+          socket.off(sessionChannel, handlers[channel]);
+        }
+      });
+    };
+  }, [currentSessionId, isHydrated]);
+
+  return <>{children}</>;
+}
+```
+
+**Responsabilidades:**
+- Subscribes to `session:{sessionId}:{channel}` on mount
+- Throttles updates per channel (reuses THROTTLE_CONFIG)
+- Dispatches data to simulatorStore
+- Cleanup on session change/unmount
+- Calls `simulatorStore.reset()` on session switch to avoid stale data
+
+### 36.14 Header Component Props
+
+O Header recebe props do layout para exibir controles da simulacao:
+
+```typescript
+// app/src/components/layout/Header.tsx
+interface HeaderProps {
+  connected?: boolean;
+  simulatorTime?: number | null;
+  simulatorStatus?: 'running' | 'paused' | 'stopped' | 'idle';
+  onSimulatorControl?: (action: 'start' | 'pause' | 'stop') => void;
+  controlPending?: boolean;
+}
+```
+
+**Comportamento dos Botoes:**
+- **Iniciar (Play)**: Visivel quando `idle`, `stopped`, ou `paused`
+  - Quando `paused`, exibe "Continuar" e usa variant `success`
+  - Quando `idle/stopped`, exibe "Iniciar" e usa variant `ghost`
+- **Pausar (Pause)**: Visivel apenas quando `running`, variant `warning`
+- **Parar (Square)**: Visivel quando `running` ou `paused`, hover vermelho
+- **Loading**: Indicador `Loader2` animado quando `controlPending=true`
+
+**Mapping de Actions:**
+O layout mapeia 'start' para 'resume' quando o status atual e 'paused':
+```typescript
+let apiAction = action;
+if (action === 'start' && sessionStatus === 'paused') {
+  apiAction = 'resume';
+}
+```
+
+### 36.15 simulatorStore.reset()
+
+Funcao para limpar todos os dados do simulador ao trocar de sessao:
+
+```typescript
+// app/src/stores/simulatorStore.ts
+reset() {
+  cachedNormalizedPlant = null;
+  lastPlantStateRef = null;
+  state = {
+    ...state,
+    health: null,
+    plantState: null,
+    buffers: null,
+    buffersState: [],
+    stops: null,
+    stopsState: [],
+    cars: null,
+    carsById: {},
+    oee: null,
+    oeeState: [],
+    mttrMtbf: null,
+    mttrMtbfState: [],
+  };
+  emitChange();
+}
+```
+
+**Quando e chamada:**
+- Automaticamente pelo `SessionChannelProvider` quando `currentSessionId` muda
+- Evita que dados da sessao anterior sejam exibidos na nova sessao
+
+### 36.16 Fluxo de Controle da Simulacao
+
+```
+User clicks "Iniciar" no Header
+  → Header calls onSimulatorControl('start')
+  → DashboardContent: handleSimulatorControl('start')
+  → Maps to 'resume' if paused, else 'start'
+  → useSessionControl.mutate({ sessionId, action })
+  → POST /api/sessions/:id/control { action: 'start' }
+  → Backend starts session → emits to session:abc123:plantstate, etc.
+  → SessionChannelProvider receives → dispatches to simulatorStore
+  → useSimulatorSelector hooks → components re-render
 ```
 
 ---

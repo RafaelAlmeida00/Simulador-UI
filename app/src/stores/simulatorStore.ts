@@ -298,6 +298,31 @@ export const simulatorStore = {
     };
     emitChange();
   },
+
+  /**
+   * Reset all simulator data to initial state.
+   * Called when switching sessions to avoid stale data from previous session.
+   */
+  reset() {
+    cachedNormalizedPlant = null;
+    lastPlantStateRef = null;
+    state = {
+      ...state,
+      health: null,
+      plantState: null,
+      buffers: null,
+      buffersState: [],
+      stops: null,
+      stopsState: [],
+      cars: null,
+      carsById: {},
+      oee: null,
+      oeeState: [],
+      mttrMtbf: null,
+      mttrMtbfState: [],
+    };
+    emitChange();
+  },
 };
 
 // Helper: find stop for a specific station

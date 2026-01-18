@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 
 interface UseNavigationKeysOptions {
   /** Total items for horizontal navigation (e.g., lines.length) */
@@ -65,13 +65,22 @@ export function wrapIndex(currentIndex: number, count: number, direction: 'prev'
 
 export function useNavigationKeys(options: UseNavigationKeysOptions): void {
   // Use ref to always have latest values without recreating handler
-  const optionsRef = useRef(options);
-  optionsRef.current = {
+  const optionsRef = useRef({
     ...options,
     horizontalKeys: options.horizontalKeys ?? DEFAULT_HORIZONTAL_KEYS,
     verticalKeys: options.verticalKeys ?? DEFAULT_VERTICAL_KEYS,
     enabled: options.enabled ?? true,
-  };
+  });
+
+  // Update ref in layout effect to keep it synchronized with latest options
+  useLayoutEffect(() => {
+    optionsRef.current = {
+      ...options,
+      horizontalKeys: options.horizontalKeys ?? DEFAULT_HORIZONTAL_KEYS,
+      verticalKeys: options.verticalKeys ?? DEFAULT_VERTICAL_KEYS,
+      enabled: options.enabled ?? true,
+    };
+  });
 
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
     const {

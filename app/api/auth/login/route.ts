@@ -27,19 +27,19 @@ export async function POST(req: NextRequest) {
     const contentType = req.headers.get('content-type') || '';
     let email: string | null = null;
     let password: string | null = null;
-    let callbackUrl = '/';
+    let callbackUrl = '/sessions';
 
     if (contentType.includes('application/x-www-form-urlencoded')) {
       const body = await req.text();
       const params = new URLSearchParams(body);
       email = params.get('email');
       password = params.get('password');
-      callbackUrl = params.get('callbackUrl') || '/';
+      callbackUrl = params.get('callbackUrl') || '/sessions';
     } else if (contentType.includes('application/json')) {
       const body = await req.json();
       email = body.email;
       password = body.password;
-      callbackUrl = body.callbackUrl || '/';
+      callbackUrl = body.callbackUrl || '/sessions';
     }
 
     // Validate required fields

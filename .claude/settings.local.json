@@ -5,7 +5,9 @@
       "Bash(npm run build:*)",
       "Bash(git checkout:*)",
       "Skill(feature-dev:feature-dev)",
-      "Skill(feature-dev:feature-dev:*)"
+      "Skill(feature-dev:feature-dev:*)",
+      "Skill(frontend-design)",
+      "Skill(frontend-design:*)"
     ]
   }
 }
