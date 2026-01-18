@@ -4,8 +4,6 @@ import * as React from 'react';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
 import {
-  Bell,
-  Search,
   Moon,
   Sun,
   Wifi,
@@ -19,24 +17,16 @@ import {
 } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { Button } from '@/src/components/ui/button';
-import { Input } from '@/src/components/ui/input';
-import { Badge } from '@/src/components/ui/badge';
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from '@/src/components/ui/tooltip';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/src/components/ui/dropdown-menu';
 import { useTheme } from './ThemeProvider';
 import { UserMenu } from './UserMenu';
+import { NotificationCenter } from './NotificationCenter';
+import { GlobalSearch } from '@/src/components/domain';
 
 // Page titles mapping
 const pageTitles: Record<string, string> = {
@@ -65,7 +55,6 @@ export function Header({
 }: HeaderProps) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
-  const [searchOpen, setSearchOpen] = React.useState(false);
 
   // Don't render header on auth pages
   if (pathname?.startsWith('/auth')) {
@@ -196,36 +185,8 @@ export function Header({
 
         {/* Right: Actions */}
         <div className="flex items-center gap-2">
-          {/* Search */}
-          <div className="relative">
-            {searchOpen ? (
-              <motion.div
-                initial={{ width: 0, opacity: 0 }}
-                animate={{ width: 200, opacity: 1 }}
-                exit={{ width: 0, opacity: 0 }}
-              >
-                <Input
-                  placeholder="Buscar..."
-                  className="h-9 w-[200px]"
-                  autoFocus
-                  onBlur={() => setSearchOpen(false)}
-                />
-              </motion.div>
-            ) : (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setSearchOpen(true)}
-                  >
-                    <Search className="h-5 w-5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Buscar</TooltipContent>
-              </Tooltip>
-            )}
-          </div>
+          {/* Global Search */}
+          <GlobalSearch />
 
           {/* Connection Status */}
           <Tooltip>
@@ -254,41 +215,7 @@ export function Header({
           </Tooltip>
 
           {/* Notifications */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="relative">
-                <Bell className="h-5 w-5" />
-                <Badge
-                  variant="destructive"
-                  className="absolute -right-1 -top-1 h-5 w-5 items-center justify-center p-0 text-[10px]"
-                >
-                  3
-                </Badge>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-80">
-              <DropdownMenuLabel>Notificacoes</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem className="flex flex-col items-start gap-1">
-                <span className="font-medium">Parada iniciada</span>
-                <span className="text-xs text-muted-foreground">
-                  Linha Body-01 - Manutencao preventiva
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem className="flex flex-col items-start gap-1">
-                <span className="font-medium">OEE baixo</span>
-                <span className="text-xs text-muted-foreground">
-                  Shop Paint - OEE abaixo de 60%
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem className="flex flex-col items-start gap-1">
-                <span className="font-medium">Buffer cheio</span>
-                <span className="text-xs text-muted-foreground">
-                  Buffer Body-Paint atingiu capacidade maxima
-                </span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <NotificationCenter />
 
           {/* Theme Toggle */}
           <Tooltip>

@@ -4,7 +4,8 @@ export const dynamic = 'force-dynamic';
 
 export function GET() {
   const env = {
-    apiBaseUrl: process.env.NEXT_PRIVATE_API_BASE_URL ?? '',
+    // Use proxy path for client-side to avoid CORS issues
+    apiBaseUrl: '/api/backend',
     socketUrl: process.env.NEXT_PRIVATE_SOCKET_URL ?? '',
   };
 

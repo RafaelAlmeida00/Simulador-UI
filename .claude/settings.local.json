@@ -3,7 +3,9 @@
     "allow": [
       "Bash(npx tsc:*)",
       "Bash(npm run build:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Skill(feature-dev:feature-dev)",
+      "Skill(feature-dev:feature-dev:*)"
     ]
   }
 }

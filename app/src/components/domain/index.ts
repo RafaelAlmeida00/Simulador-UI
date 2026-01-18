@@ -7,3 +7,4 @@ export * from './ConnectionStatus';
 export * from './StationCard';
 export * from './VirtualizedStationCards';
 export * from './DetailsDrawer';
+export * from './GlobalSearch';

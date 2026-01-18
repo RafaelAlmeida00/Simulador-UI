@@ -102,6 +102,88 @@
   --animate-spin: spin 1s linear infinite;
 }
 
+/* ===== TEMA LIGHT - Modern & Clean ===== */
+
+.light {
+  /* Cores base do tema */
+  --color-background: #f8fafc;
+  --color-foreground: #0f172a;
+
+  --color-card: #ffffff;
+  --color-card-foreground: #0f172a;
+
+  --color-popover: #ffffff;
+  --color-popover-foreground: #0f172a;
+
+  /* Cor primaria - VERMELHO (mantido) */
+  --color-primary: #dc2626;
+  --color-primary-foreground: #ffffff;
+  --color-primary-hover: #b91c1c;
+
+  /* Secundaria */
+  --color-secondary: #f1f5f9;
+  --color-secondary-foreground: #0f172a;
+
+  /* Muted */
+  --color-muted: #f1f5f9;
+  --color-muted-foreground: #64748b;
+
+  /* Accent */
+  --color-accent: #f1f5f9;
+  --color-accent-foreground: #0f172a;
+
+  /* Success - Teal (mantido) */
+  --color-success: #0d9488;
+  --color-success-foreground: #ffffff;
+
+  /* Warning (mantido) */
+  --color-warning: #f59e0b;
+  --color-warning-foreground: #000000;
+
+  /* Destructive */
+  --color-destructive: #dc2626;
+  --color-destructive-foreground: #ffffff;
+
+  /* Info (mantido) */
+  --color-info: #3b82f6;
+  --color-info-foreground: #ffffff;
+
+  /* Border e ring */
+  --color-border: #e2e8f0;
+  --color-input: #f8fafc;
+  --color-ring: #dc2626;
+
+  /* Cores de status (mantidas) */
+  --color-status-online: #22c55e;
+  --color-status-offline: #ef4444;
+  --color-status-idle: #f59e0b;
+
+  /* Cores de severidade (mantidas) */
+  --color-severity-low: #22c55e;
+  --color-severity-medium: #f59e0b;
+  --color-severity-high: #ef4444;
+  --color-severity-planned: #3b82f6;
+
+  /* Sidebar */
+  --color-sidebar: #ffffff;
+  --color-sidebar-foreground: #0f172a;
+  --color-sidebar-accent: #f8fafc;
+  --color-sidebar-border: #e2e8f0;
+
+  /* Charts (mantidas) */
+  --color-chart-1: #dc2626;
+  --color-chart-2: #0d9488;
+  --color-chart-3: #3b82f6;
+  --color-chart-4: #f59e0b;
+  --color-chart-5: #8b5cf6;
+
+  /* Shadows - mais sutis para tema light */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.15), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.15), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+}
+
 @keyframes accordion-down {
   from { height: 0; }
   to { height: var(--radix-accordion-content-height); }
@@ -162,6 +244,10 @@ html {
   color-scheme: dark;
 }
 
+html.light {
+  color-scheme: light;
+}
+
 body {
   background-color: var(--color-background);
   color: var(--color-foreground);
@@ -190,6 +276,20 @@ body {
   background: var(--color-muted-foreground);
 }
 
+/* Scrollbar - Light Theme */
+html.light ::-webkit-scrollbar-track {
+  background: var(--color-background);
+}
+
+html.light ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: var(--radius-full);
+}
+
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
 /* ===== FOCUS STYLES ===== */
 
 *:focus-visible {
@@ -208,6 +308,13 @@ body {
 
 .glass {
   background: rgba(21, 27, 35, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border);
+}
+
+/* Glass - Light Theme */
+html.light .glass {
+  background: rgba(255, 255, 255, 0.7);
   backdrop-filter: blur(12px);
   border: 1px solid var(--color-border);
 }

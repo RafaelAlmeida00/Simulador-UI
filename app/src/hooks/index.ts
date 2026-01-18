@@ -7,3 +7,9 @@ export * from './useSimulatorStore';
 export * from './useEventsQuery';
 export * from './useStopsQuery';
 export * from './useOEEQuery';
+
+// Notification Engine
+export * from './useNotificationEngine';
+
+// Keyboard Shortcuts (used by GlobalSearch)
+export * from './useKeyboardShortcut';

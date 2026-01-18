@@ -17,17 +17,13 @@ import { NextRequest, NextResponse } from 'next/server';
  */
 const ALLOWED_ORIGINS: Record<string, string[]> = {
   development: [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://127.0.0.1:3000',
+    'http://localhost:3000', 'http://localhost:3001'
   ],
   test: [
-    'http://localhost:3000',
+    'http://localhost:3000', 'http://localhost:3001'
   ],
   production: [
-    // Add your production domain(s) here
-    // 'https://yourdomain.com',
-    // 'https://www.yourdomain.com',
+    'https://simulador-ui.vercel.app'
   ],
 };
 

@@ -28,6 +28,7 @@
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@radix-ui/react-visually-hidden": "^1.2.4",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-query": "^5.90.16",
     "@tanstack/react-query-devtools": "^5.91.2",
@@ -54,7 +55,8 @@
     "socket.io-msgpack-parser": "^3.0.2",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0",
-    "tailwindcss-animate": "^1.0.7"
+    "tailwindcss-animate": "^1.0.7",
+    "zustand": "^5.0.10"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

@@ -117,7 +117,7 @@ export default function HomePage() {
 
     // Get OEE from socket
     const oeeData = getOEEForLine(oeeState, currentShopName, `${currentShopName}-${currentLine?.name}`);
-    const oee = oeeData?.oee;
+    const oee = oeeData?.oee ?? 0;
 
     return {
       totalStations,

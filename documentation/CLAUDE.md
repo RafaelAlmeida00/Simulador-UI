@@ -2133,4 +2133,545 @@ for i in {1..6}; do curl -X POST /api/auth/login -d '{"email":"test@test.com","p
 
 ---
 
+## 30. Global Search / Command Palette
+
+Sistema de busca global estilo Command Palette acionado por `Ctrl+K` / `Cmd+K`.
+
+### 30.1 Arquitetura
+
+```
+app/src/
+├── components/domain/GlobalSearch/
+│   ├── index.tsx              # Componente principal
+│   ├── useGlobalSearch.ts     # Hook de estado e indexacao
+│   ├── SearchResultItem.tsx   # Item da lista de resultados
+│   └── SearchResultCard.tsx   # Card de detalhe com navegacao
+├── types/search.ts            # Tipos TypeScript
+├── utils/searchUtils.ts       # Funcoes de indexacao e score
+└── hooks/useKeyboardShortcut.ts # Hook de atalhos de teclado
+```
+
+### 30.2 Uso do Componente
+
+```tsx
+import { GlobalSearch } from '@/src/components/domain';
+
+// No Header ou layout
+<GlobalSearch />
+```
+
+O componente:
+- Renderiza botao com atalho `Ctrl+K`
+- Abre Dialog modal centralizado
+- Indexa dados do simulatorStore ao abrir (snapshot)
+- Filtra em tempo real conforme digitacao
+- Exibe Card de detalhe ao selecionar resultado
+
+### 30.3 Categorias de Busca (8 categorias)
+
+| Categoria | Fonte de Dados | Campos Buscaveis | Rota |
+|-----------|----------------|------------------|------|
+| `shop` | plantState.shops | name | `/` |
+| `line` | plantState.shops[].lines | name, shop, taktMn | `/` |
+| `station` | plantState.shops[].lines[].stations | name, shop, line | `/` |
+| `buffer` | buffersState | id, from, to, type, status | `/buffers` |
+| `car` | carsById | id, sequenceNumber, model, color | `/` |
+| `oee` | oeeState | shop, line, oee, jph | `/oee` |
+| `stop` | stopsState | shop, line, station, reason | `/stoppages` |
+| `mttr` | mttrMtbfState | shop, line, station | `/mttr-mtbf` |
+
+### 30.4 Algoritmo de Scoring
+
+```typescript
+// searchUtils.ts
+export function calculateScore(value: string, searchTerm: string): number {
+  const normalized = normalizeSearchTerm(value);
+  const term = normalizeSearchTerm(searchTerm);
+
+  if (normalized === term) return 100;     // Exact match
+  if (normalized.startsWith(term)) return 80;  // Prefix match
+  if (normalized.includes(term)) return 50;    // Contains match
+  return 0;
+}
+```
+
+Resultados sao ordenados por score decrescente.
+
+### 30.5 Hook useKeyboardShortcut
+
+```typescript
+import { useKeyboardShortcut } from '@/src/hooks/useKeyboardShortcut';
+
+// Ctrl+K ou Cmd+K para abrir busca
+useKeyboardShortcut('k', () => setOpen(true), { ctrl: true, meta: true });
+
+// Shift+Escape para outra acao
+useKeyboardShortcut('Escape', closeModal, { shift: true });
+```
+
+**Modifiers disponiveis:**
+- `ctrl`: Windows/Linux Ctrl
+- `meta`: Mac Cmd
+- `shift`: Shift
+- `alt`: Alt/Option
+
+### 30.6 Tipos TypeScript
+
+```typescript
+// types/search.ts
+export type SearchCategory =
+  | 'shop' | 'line' | 'station' | 'buffer'
+  | 'car' | 'oee' | 'stop' | 'mttr';
+
+export interface SearchResult {
+  id: string;
+  category: SearchCategory;
+  title: string;
+  subtitle?: string;
+  description?: string;
+  data: unknown;
+  matchedFields: string[];
+  route: string;
+  score: number;
+}
+
+export interface SearchIndex {
+  shops: SearchResult[];
+  lines: SearchResult[];
+  stations: SearchResult[];
+  buffers: SearchResult[];
+  cars: SearchResult[];
+  oee: SearchResult[];
+  stops: SearchResult[];
+  mttr: SearchResult[];
+}
+
+// Constantes
+export const CATEGORY_LABELS: Record<SearchCategory, string>;
+export const CATEGORY_ROUTES: Record<SearchCategory, string>;
+export const CATEGORY_ORDER: SearchCategory[];
+```
+
+### 30.7 Exemplo de Extensao (adicionar nova categoria)
+
+```typescript
+// 1. types/search.ts - Adicionar tipo
+export type SearchCategory = ... | 'novacategoria';
+
+// 2. types/search.ts - Adicionar labels e rotas
+export const CATEGORY_LABELS = { ..., novacategoria: 'Nova Categoria' };
+export const CATEGORY_ROUTES = { ..., novacategoria: '/nova-rota' };
+export const CATEGORY_ORDER = [..., 'novacategoria'];
+
+// 3. searchUtils.ts - Adicionar no buildSearchIndex
+state.novosDados.forEach((item) => {
+  index.novacategoria.push({
+    id: item.id,
+    category: 'novacategoria',
+    title: item.nome,
+    // ...
+  });
+});
+```
+
+---
+
+## 31. Sistema de Notificacoes
+
+Sistema de alertas baseado em socket data com Zustand store e regras configuraveis.
+
+### 31.1 Arquitetura
+
+```
+app/src/
+├── stores/notificationStore.ts       # Zustand store com persistence
+├── hooks/useNotificationEngine.ts    # Hook de regras e geracao
+└── components/layout/NotificationCenter.tsx  # UI Popover
+```
+
+### 31.2 Notification Store (Zustand)
+
+```typescript
+// stores/notificationStore.ts
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+
+export type NotificationSeverity = 'info' | 'warning' | 'critical';
+export type NotificationCategory = 'STOP' | 'BUFFER' | 'OEE' | 'SYSTEM';
+
+export interface Notification {
+  id: string;
+  category: NotificationCategory;
+  severity: NotificationSeverity;
+  title: string;
+  message: string;
+  timestamp: number;
+  read: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+// Store com persistence
+export const useNotificationStore = create<NotificationState>()(
+  persist(
+    (set) => ({
+      notifications: [],
+      add: (notification) => { /* ... */ },
+      markAsRead: (id) => { /* ... */ },
+      markAllAsRead: () => { /* ... */ },
+      dismiss: (id) => { /* ... */ },
+      clear: () => set({ notifications: [] }),
+    }),
+    {
+      name: 'simulator-notifications',
+      partialize: (state) => ({
+        notifications: state.notifications.slice(0, 20), // Persist apenas 20
+      }),
+    }
+  )
+);
+
+// Selectors
+export const selectUnreadCount = (state: NotificationState) =>
+  state.notifications.filter((n) => !n.read).length;
+```
+
+**Limites:**
+- `MAX_NOTIFICATIONS = 50` em memoria
+- `PERSIST_LIMIT = 20` no localStorage
+
+### 31.3 Notification Engine (Regras)
+
+```typescript
+// hooks/useNotificationEngine.ts
+const CONFIG = {
+  BUFFER_HIGH_THRESHOLD: 0.90,     // 90% - warning
+  BUFFER_CRITICAL_THRESHOLD: 0.95, // 95% - critical
+  BUFFER_LOW_THRESHOLD: 0.10,      // 10% - starving warning
+  OEE_TARGET: 85,                  // Target 85%
+  OEE_WARNING_DIFF: 5,             // 5% below = warning
+  OEE_CRITICAL_DIFF: 15,           // 15% below = critical
+  DEBOUNCE_MS: 30000,              // 30s entre notificacoes similares
+};
+```
+
+**4 Regras Implementadas:**
+
+| Regra | Trigger | Severity |
+|-------|---------|----------|
+| Stop HIGH | Nova parada severidade HIGH | `critical` |
+| Stop MEDIUM | Nova parada severidade MEDIUM | `warning` |
+| Buffer >= 95% | Capacidade critica | `critical` |
+| Buffer >= 90% | Capacidade alta | `warning` |
+| Buffer <= 10% | Buffer esvaziando | `warning` |
+| OEE 15%+ abaixo target | OEE muito baixo | `critical` |
+| OEE 5%+ abaixo target | OEE abaixo target | `warning` |
+| Simulator status change | running/paused/stopped | `info`/`warning` |
+
+### 31.4 Ativacao do Engine
+
+```tsx
+// app/(dashboard)/layout.tsx
+import { useNotificationEngine } from '@/src/hooks/useNotificationEngine';
+
+export default function DashboardLayout({ children }) {
+  // Ativar engine de notificacoes
+  useNotificationEngine();
+
+  return ( /* ... */ );
+}
+```
+
+### 31.5 NotificationCenter UI
+
+```tsx
+import { NotificationCenter } from '@/src/components/layout';
+
+// No Header
+<NotificationCenter />
+```
+
+**Funcionalidades:**
+- Badge com contagem de nao-lidas (9+ se > 9)
+- Icones por categoria (AlertTriangle, AlertCircle, Info)
+- Cores por severidade (destructive, warning, info)
+- Tempo relativo sem date-fns ("agora mesmo", "ha 5 min", "ha 2 dias")
+- Acoes: Marcar como lida, Remover, Marcar todas, Limpar todas
+- Animacoes com Framer Motion AnimatePresence
+
+### 31.6 Adicionar Nova Regra
+
+```typescript
+// useNotificationEngine.ts
+React.useEffect(() => {
+  // Sua logica de deteccao
+  for (const item of customState) {
+    const key = `custom-${item.id}`;
+    if (shouldNotify(key)) {
+      addNotification({
+        category: 'SYSTEM', // ou nova categoria
+        severity: 'warning',
+        title: 'Titulo da Notificacao',
+        message: 'Mensagem detalhada',
+        metadata: { itemId: item.id },
+      });
+      markNotified(key);
+    }
+  }
+}, [customState, addNotification]);
+```
+
+---
+
+## 32. Menu do Usuario
+
+Dropdown menu com gerenciamento de perfil e logout.
+
+### 32.1 Componente UserMenu
+
+```tsx
+import { UserMenu } from '@/src/components/layout';
+
+// No Header
+<UserMenu />
+```
+
+**Funcionalidades:**
+- Avatar com iniciais como fallback
+- Exibicao de nome e email
+- Alterar foto de perfil (URL)
+- Alterar nome de exibicao
+- Logout com redirect
+
+### 32.2 Estrutura do Componente
+
+```tsx
+// components/layout/UserMenu.tsx
+export function UserMenu({ className }: UserMenuProps) {
+  const { data: session, update: updateSession } = useSession();
+  const [nameModalOpen, setNameModalOpen] = React.useState(false);
+  const [photoModalOpen, setPhotoModalOpen] = React.useState(false);
+  const [modalState, setModalState] = React.useState<ModalState>('idle');
+
+  // Estados do modal: 'idle' | 'loading' | 'success' | 'error'
+}
+```
+
+### 32.3 API de Perfil
+
+```typescript
+// PUT /api/user/profile
+const response = await fetch('/api/user/profile', {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    name: 'Novo Nome',    // opcional
+    image: 'https://...'  // opcional, null para remover
+  }),
+});
+
+// Apos sucesso, atualizar sessao
+await updateSession({
+  ...session,
+  user: { ...session?.user, name: newName },
+});
+```
+
+### 32.4 Estados de Modal Animados
+
+```tsx
+<AnimatePresence mode="wait">
+  {modalState === 'loading' && (
+    <motion.div key="loading">
+      <Loader2 className="animate-spin" />
+      <p>Atualizando...</p>
+    </motion.div>
+  )}
+  {modalState === 'success' && (
+    <motion.div key="success">
+      <CheckCircle2 className="text-success" />
+      <p>Atualizado com sucesso!</p>
+    </motion.div>
+  )}
+  {modalState === 'error' && (
+    <motion.div key="error">
+      <XCircle className="text-destructive" />
+      <p>{errorMessage}</p>
+      <Button onClick={() => setModalState('idle')}>Tentar novamente</Button>
+    </motion.div>
+  )}
+  {modalState === 'idle' && (
+    <motion.div key="form">
+      {/* Formulario */}
+    </motion.div>
+  )}
+</AnimatePresence>
+```
+
+---
+
+## 33. Sistema de Tema (Light/Dark)
+
+Sistema de tema com suporte a dark, light e system preference.
+
+### 33.1 ThemeProvider
+
+```tsx
+// components/layout/ThemeProvider.tsx
+type Theme = 'dark' | 'light' | 'system';
+
+interface ThemeProviderProps {
+  children: React.ReactNode;
+  defaultTheme?: Theme;          // default: 'dark'
+  storageKey?: string;           // default: 'simulador-ui-theme'
+}
+
+export function ThemeProvider({ children, defaultTheme, storageKey }) {
+  // Persiste no localStorage
+  // Aplica classe no document.documentElement
+  // Detecta system preference via matchMedia
+}
+
+export function useTheme(): { theme: Theme; setTheme: (theme: Theme) => void }
+```
+
+### 33.2 Configuracao no Root Layout
+
+```tsx
+// app/layout.tsx
+import { ThemeProvider } from '@/src/components/layout';
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="pt-BR" suppressHydrationWarning>
+      <body>
+        <ThemeProvider defaultTheme="dark" storageKey="simulador-ui-theme">
+          {children}
+        </ThemeProvider>
+      </body>
+    </html>
+  );
+}
+```
+
+### 33.3 Toggle no Header
+
+```tsx
+import { useTheme } from './ThemeProvider';
+import { Moon, Sun } from 'lucide-react';
+
+function ThemeToggle() {
+  const { theme, setTheme } = useTheme();
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+    >
+      <motion.div animate={{ rotate: theme === 'dark' ? 0 : 180 }}>
+        {theme === 'dark' ? <Moon /> : <Sun />}
+      </motion.div>
+    </Button>
+  );
+}
+```
+
+### 33.4 CSS Variables por Tema
+
+```css
+/* globals.css */
+@layer base {
+  :root {
+    /* Light theme variables */
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --primary: 0 84% 60%;
+    /* ... */
+  }
+
+  .dark {
+    /* Dark theme variables */
+    --background: 216 28% 7%;
+    --foreground: 210 40% 98%;
+    --primary: 0 84% 60%;
+    /* ... */
+  }
+}
+```
+
+### 33.5 Cores Disponiveis
+
+| Cor | Uso | Light | Dark |
+|-----|-----|-------|------|
+| `primary` | Botoes principais, links | Vermelho | Vermelho |
+| `success` | Status OK, confirmacao | Teal | Teal |
+| `warning` | Alertas, atencao | Amarelo | Amarelo |
+| `info` | Informacoes neutras | Azul | Azul |
+| `destructive` | Erros, acoes destrutivas | Vermelho escuro | Vermelho |
+| `muted` | Texto secundario | Cinza claro | Cinza escuro |
+
+---
+
+## 34. Componentes de Layout Exportados
+
+### 34.1 Barrel Export
+
+```typescript
+// components/layout/index.ts
+export * from './ThemeProvider';      // ThemeProvider, useTheme
+export * from './PageTransition';     // Animacao de transicao de paginas
+export * from './Sidebar';            // Navegacao lateral
+export * from './Header';             // Cabecalho com controles
+export * from './UserMenu';           // Menu do usuario
+export * from './NotificationCenter'; // Centro de notificacoes
+```
+
+### 34.2 Uso nos Layouts
+
+```tsx
+import {
+  Sidebar,
+  Header,
+  PageTransition,
+  ThemeProvider,
+  NotificationCenter,
+  UserMenu,
+} from '@/src/components/layout';
+```
+
+---
+
+## 35. Hooks Exportados
+
+### 35.1 Barrel Export
+
+```typescript
+// hooks/index.ts
+// Simulator Store (realtime)
+export * from './useSimulatorStore';
+
+// React Query Hooks (REST API)
+export * from './useEventsQuery';
+export * from './useStopsQuery';
+export * from './useOEEQuery';
+
+// Notification Engine
+export * from './useNotificationEngine';
+
+// Keyboard Shortcuts (usado pelo GlobalSearch)
+export * from './useKeyboardShortcut';
+```
+
+### 35.2 Adicionar Novo Hook
+
+```typescript
+// 1. Criar hook em hooks/useNewHook.ts
+export function useNewHook() { /* ... */ }
+
+// 2. Adicionar export em hooks/index.ts
+export * from './useNewHook';
+```
+
+---
+
 This guide is intended for AI agents to understand, maintain, and extend React/Next.js applications using FLUX architecture with shadcn/ui, Tailwind CSS, and modern best practices for scalability, maintainability, and performance.
