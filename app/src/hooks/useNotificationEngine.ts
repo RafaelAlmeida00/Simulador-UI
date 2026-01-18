@@ -13,7 +13,7 @@ const CONFIG = {
   OEE_TARGET: 85,
   OEE_WARNING_DIFF: 5,
   OEE_CRITICAL_DIFF: 15,
-  DEBOUNCE_MS: 30000, // 30 seconds between similar notifications
+  DEBOUNCE_MS: 1000000, // 1000 seconds between similar notifications
 };
 
 // Debounce map to avoid notification spam
