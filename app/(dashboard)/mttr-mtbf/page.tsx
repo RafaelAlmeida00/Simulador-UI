@@ -490,7 +490,7 @@ export default function MttrMtbfPage() {
             <StatsCard
               title="MTTR (Mean Time To Repair)"
               value={avgMttr.toFixed(1)}
-              subtitle="Tempo medio para reparar uma falha (minutos)"
+              subtitle="Tempo medio de uma falha (minutos)"
               icon={Timer}
               iconColor="var(--color-warning)"
             />

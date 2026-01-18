@@ -53,7 +53,7 @@ export function StatsCard({
           <div className="space-y-2">
             <p className="text-sm font-medium text-muted-foreground">{title}</p>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold tracking-tight">{value}</span>
+              <span className="text-2xl font-bold tracking-tight">{value}</span>
               {trend && (
                 <div className={cn('flex items-center gap-1 text-sm', getTrendColor())}>
                   {getTrendIcon()}

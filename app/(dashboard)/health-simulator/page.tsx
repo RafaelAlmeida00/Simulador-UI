@@ -300,15 +300,15 @@ export default function HealthSimulatorPage() {
               iconColor="var(--color-info)"
             />
             <StatsCard
-              title="WebSocket Rooms"
+              title="WebSocket"
               value={wsRoomsCount}
-              subtitle={wsRoomsList || 'nenhuma room inscrita'}
+              subtitle={'Salas inscritas'}
               icon={Wifi}
               iconColor={connected ? 'var(--color-success)' : 'var(--color-destructive)'}
             />
             <StatsCard
               title="Database"
-              value={dbConnected ? 'Conectado' : 'Desconectado'}
+              value={dbConnected ? 'Ativo' : 'Error'}
               subtitle={dbConnected ? 'operacional' : 'verificar conexao'}
               icon={Database}
               iconColor={dbConnected ? 'var(--color-success)' : 'var(--color-destructive)'}

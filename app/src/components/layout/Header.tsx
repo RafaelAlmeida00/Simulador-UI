@@ -93,7 +93,7 @@ export function Header({
           <h1 className="text-xl font-semibold">{pageTitle}</h1>
         </div>
 
-        {/* Center: Simulator Date, Status & Time */}
+        {/* Center: Simulator Date, Time & Status */}
         <div className="flex items-center gap-4">
           {/* Simulator Date */}
           <Tooltip>
@@ -106,6 +106,19 @@ export function Header({
               </div>
             </TooltipTrigger>
             <TooltipContent>Data da simulacao</TooltipContent>
+          </Tooltip>
+
+          {/* Simulator Time */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-2 rounded-lg bg-secondary px-3 py-1.5">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                <span className="font-mono text-sm font-medium">
+                  {formatSimTime(simulatorTime)}
+                </span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>Hora da simulacao</TooltipContent>
           </Tooltip>
 
           {/* Simulator Status Badge */}
@@ -128,19 +141,6 @@ export function Header({
               </div>
             </TooltipTrigger>
             <TooltipContent>Status da Simulacao</TooltipContent>
-          </Tooltip>
-
-          {/* Simulator Time */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="flex items-center gap-2 rounded-lg bg-secondary px-3 py-1.5">
-                <Clock className="h-4 w-4 text-muted-foreground" />
-                <span className="font-mono text-sm font-medium">
-                  {formatSimTime(simulatorTime)}
-                </span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>Hora da simulacao</TooltipContent>
           </Tooltip>
 
           {/* Simulator Controls */}

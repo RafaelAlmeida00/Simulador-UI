@@ -13,3 +13,6 @@ export * from './useNotificationEngine';
 
 // Keyboard Shortcuts (used by GlobalSearch)
 export * from './useKeyboardShortcut';
+
+// Navigation Keys (WASD/Arrows for dashboard navigation)
+export * from './useNavigationKeys';

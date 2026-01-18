@@ -23,6 +23,8 @@ import type { IStopLine, IBuffer, ICar } from '@/src/types/socket';
 import { normalizePlantSnapshot } from '@/src/utils/plantNormalize';
 import type { NormalizedStation } from '@/src/utils/plantNormalize';
 import { useSimulatorSelector } from '@/src/hooks/useSimulatorStore';
+import { useNavigationKeys, wrapIndex } from '@/src/hooks/useNavigationKeys';
+import { NavigationArrows } from '@/src/components/ui/navigation-arrows';
 
 type DetailSelection =
   | { kind: 'line'; title: string; data: unknown }
@@ -135,6 +137,28 @@ export default function HomePage() {
   const handleLineChange = React.useCallback((newLineIndex: number) => {
     setLineIndex(newLineIndex);
   }, []);
+
+  // Keyboard navigation: A/D/arrows for lines, W/S/arrows for shops
+  useNavigationKeys({
+    horizontalCount: lines.length,
+    verticalCount: shops.length,
+    horizontalIndex: lineIndex,
+    verticalIndex: shopIndex,
+    onHorizontalChange: handleLineChange,
+    onVerticalChange: handleShopChange,
+    enabled: mounted && shops.length > 0,
+  });
+
+  // Arrow click handlers with wrap-around (using shared wrapIndex utility)
+  const handlePreviousLine = React.useCallback(() => {
+    if (lines.length <= 1) return;
+    handleLineChange(wrapIndex(lineIndex, lines.length, 'prev'));
+  }, [lineIndex, lines.length, handleLineChange]);
+
+  const handleNextLine = React.useCallback(() => {
+    if (lines.length <= 1) return;
+    handleLineChange(wrapIndex(lineIndex, lines.length, 'next'));
+  }, [lineIndex, lines.length, handleLineChange]);
 
   const selectionWithStop = React.useMemo(() => {
     if (!selection || selection.kind !== 'station') return selection;
@@ -344,7 +368,18 @@ export default function HomePage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
+        className="relative"
       >
+        {/* Navigation Arrows */}
+        <NavigationArrows
+          onPrevious={handlePreviousLine}
+          onNext={handleNextLine}
+          previousLabel="Linha anterior"
+          nextLabel="Proxima linha"
+          showPrevious={lines.length > 1}
+          showNext={lines.length > 1}
+        />
+
         <Card
           onClick={handleLineClick}
           className="p-4 cursor-pointer hover:shadow-lg transition-shadow"
