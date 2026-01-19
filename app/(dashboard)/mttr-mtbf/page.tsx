@@ -28,14 +28,13 @@ import { Label } from '@/src/components/ui/label';
 import { StatsCard, DataTable } from '@/src/components/data-display';
 import { DetailsDrawer } from '@/src/components/domain';
 import { EmptyState } from '@/src/components/feedback';
-import http from '@/src/utils/http';
-import { getSocket } from '@/src/utils/socket';
 import { normalizePlantSnapshot } from '@/src/utils/plantNormalize';
 import { formatEpochMs } from '@/src/utils/timeFormat';
 import { ymdFromEpochMs } from '@/src/utils/date';
-import { asArrayFromPayload, uniqStrings } from '@/src/utils/safe';
-import type { IStopLine, MTTRMTBFData } from '@/src/types/socket';
+import { uniqStrings } from '@/src/utils/safe';
+import type { IStopLine } from '@/src/types/socket';
 import { useSimulatorSelector } from '@/src/hooks/useSimulatorStore';
+import { useMTTRMTBF, useCompletedStops, type MTTRMTBFRecord } from '@/src/hooks/useMTTRMTBFQuery';
 import { cn } from '@/src/lib/utils';
 
 function todayStr(epochMs: number): string {
@@ -46,20 +45,9 @@ function uniq(values: Array<string | undefined | null>): string[] {
   return uniqStrings(values);
 }
 
-function asArray<T>(payload: unknown): T[] {
-  return asArrayFromPayload<T>(payload);
-}
-
 function getEndTime(stop: IStopLine): number {
   return stop.end_time ?? 0;
 }
-
-type MttrMtbfRecord = MTTRMTBFData & {
-  id?: number;
-  total_failures?: number;
-  total_repair_time?: number;
-  total_uptime?: number;
-};
 
 type StationRow = {
   shop: string;
@@ -84,10 +72,6 @@ function MtbfStatusBadge({ percentage }: { percentage: number }) {
 }
 
 export default function MttrMtbfPage() {
-  React.useEffect(() => {
-    getSocket();
-  }, []);
-
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
 
@@ -135,61 +119,27 @@ export default function MttrMtbfPage() {
     return uniq(stations);
   }, [plant.shops, filterShop, filterLine]);
 
-  const [loading, setLoading] = React.useState(false);
-  const [mttrMtbfData, setMttrMtbfData] = React.useState<MttrMtbfRecord[]>([]);
-  const [stopsLoading, setStopsLoading] = React.useState(false);
-  const [stops, setStops] = React.useState<IStopLine[]>([]);
+  // Use React Query hooks for session-scoped data fetching
+  const {
+    data: mttrMtbfData = [],
+    isLoading: loading,
+  } = useMTTRMTBF({
+    date: filterDate || undefined,
+    shop: filterShop || undefined,
+    line: filterLine || undefined,
+    station: filterStation || undefined,
+  });
+
+  const {
+    data: stops = [],
+    isLoading: stopsLoading,
+  } = useCompletedStops({
+    shop: filterShop || undefined,
+    line: filterLine || undefined,
+    station: filterStation || undefined,
+  });
 
   const simTimestamp = healthSimMs ?? Date.now();
-
-  // Fetch MTTR/MTBF data
-  React.useEffect(() => {
-    if (!filterDate) return;
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      try {
-        const params: Record<string, string> = { date: filterDate };
-        if (filterShop) params.shop = filterShop;
-        if (filterLine) params.line = filterLine;
-        if (filterStation) params.station = filterStation;
-
-        const res = await http.get('/mttr-mtbf', { params });
-        if (!cancelled) setMttrMtbfData(asArray<MttrMtbfRecord>(res.data));
-      } catch {
-        if (!cancelled) setMttrMtbfData([]);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [filterDate, filterShop, filterLine, filterStation]);
-
-  // Fetch stops
-  React.useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setStopsLoading(true);
-      try {
-        const params: Record<string, string> = { status: 'COMPLETED' };
-        if (filterShop) params.shop = filterShop;
-        if (filterLine) params.line = filterLine;
-        if (filterStation) params.station = filterStation;
-
-        const res = await http.get('/stops', { params });
-        if (!cancelled) setStops(asArray<IStopLine>(res.data));
-      } catch {
-        if (!cancelled) setStops([]);
-      } finally {
-        if (!cancelled) setStopsLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [filterShop, filterLine, filterStation]);
 
   // Calculate averages
   const { avgMttr, avgMtbf } = React.useMemo(() => {
@@ -239,7 +189,7 @@ export default function MttrMtbfPage() {
 
     for (const [, data] of stationMap) {
       const mtbfRecord = mttrMtbfData.find(
-        (r) => r.shop === data.shop && r.line === data.line && r.station === data.station
+        (r: MTTRMTBFRecord) => r.shop === data.shop && r.line === data.line && r.station === data.station
       );
 
       const mtbfMinutes = mtbfRecord?.mtbf ?? 0;

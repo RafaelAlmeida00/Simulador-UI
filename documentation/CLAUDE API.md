@@ -997,8 +997,208 @@ oee = ((taktTime * carsProduction) / effectiveProductionTime) * 100
 
 ---
 
+### Race Condition Fix in Session Initialization
+
+**Issue: False WORKER_CRASHED events and "Worker already exists" errors**
+
+When two POST `/api/sessions/:id/start` requests arrived simultaneously (double-click, retry, etc.), both passed status validation and attempted to spawn workers, causing HTTP 500 "Worker already exists for session".
+
+**Root Cause Analysis:**
+1. `worker.terminate()` always returns exit code 1 (not 0) in Node.js
+2. Exit handler interpreted code !== 0 as crash, emitting `WORKER_CRASHED`
+3. Race condition between `workers.delete()` and exit handler
+4. No idempotency in `startSession()` - didn't check if session already running
+
+**Files Modified:**
+
+| File | Changes |
+|------|---------|
+| `src/sessions/WorkerPoolManager.ts` | Added `gracefulShutdown` flag, fixed exit handler, fixed terminateWorker order |
+| `src/workers/SimulationWorker.ts` | Added `process.exit(0)` in stop() for graceful shutdown |
+| `src/sessions/SessionManager.ts` | Added idempotency and rollback to startSession() and recoverSession() |
+
+**Solution Details:**
+
+1. **WorkerMetadata Interface** - Added `gracefulShutdown: boolean` flag:
+```typescript
+interface WorkerMetadata {
+    // ... existing fields ...
+    gracefulShutdown: boolean; // Marks intentional shutdown to prevent false crash detection
+}
+```
+
+2. **Exit Handler** - Check flag before emitting crash:
+```typescript
+worker.on('exit', (code) => {
+    const metadata = this.workers.get(sessionId);
+    const wasGracefulShutdown = metadata?.gracefulShutdown === true;
+    const wasActive = metadata !== undefined;
+    this.workers.delete(sessionId);
+    // Only emit crash if NOT graceful shutdown
+    if (wasActive && !wasGracefulShutdown) {
+        this.emit('event', { type: 'WORKER_CRASHED', ... });
+    }
+});
+```
+
+3. **terminateWorker()** - Set flag and delete BEFORE terminate:
+```typescript
+public async terminateWorker(sessionId: string): Promise<void> {
+    const metadata = this.workers.get(sessionId);
+    if (!metadata) { return; }
+    metadata.status = 'stopping';
+    metadata.gracefulShutdown = true;
+    this.workers.delete(sessionId);  // Delete BEFORE terminate to avoid race
+    // ... send STOP, wait, terminate ...
+}
+```
+
+4. **SimulationWorker.stop()** - Exit gracefully with code 0:
+```typescript
+private stop(): void {
+    // ... cleanup ...
+    setTimeout(() => { process.exit(0); }, 100);
+}
+```
+
+5. **SessionManager.startSession()** - Idempotency + Rollback:
+```typescript
+public async startSession(sessionId: string, userId: string): Promise<ISession> {
+    // IDEMPOTENCY: If already running, return existing session
+    if (session.status === 'running') {
+        return session;
+    }
+    let workerId: string | undefined;
+    try {
+        workerId = await this.workerPool.spawnWorker(sessionId);
+        // ... INIT, START commands ...
+        return updatedSession;
+    } catch (error) {
+        // ROLLBACK: Clean up worker if spawn/init/start failed
+        if (workerId) {
+            await this.workerPool.terminateWorker(sessionId);
+        }
+        throw error;
+    }
+}
+```
+
+**Shutdown Flow After Fix:**
+```
+stopSession() → terminateWorker()
+    ├── metadata.gracefulShutdown = true
+    ├── workers.delete(sessionId)  ← BEFORE terminate
+    ├── postMessage('STOP')
+    └── worker.terminate()
+         ↓
+Worker receives STOP → stop() → process.exit(0)
+         ↓
+Exit handler → gracefulShutdown=true → NO WORKER_CRASHED ✓
+```
+
+---
+
+### In-Memory Check + Stale Worker Cleanup (2026-01-18)
+
+**Issue: Previous fix incomplete - DB status check not sufficient**
+
+The idempotency check `session.status === 'running'` only catches sessions after spawn completes. During the ~30 second spawn/init phase, the DB status is still `idle`, so concurrent requests all pass and try to spawn workers.
+
+**Root Cause:**
+```
+Request A: DB check (idle) → passes → spawnWorker() → workers.Map.set() → waiting INIT_COMPLETE...
+                                                          ↓
+Request B: DB check (idle) → passes → spawnWorker() → workers.has() = true → ERROR "Worker already exists"
+```
+
+**Solution: Two-level idempotency check**
+
+1. **DB level**: `session.status === 'running'` catches completed starts
+2. **In-memory level**: `workerPool.hasWorker(sessionId)` catches in-progress starts
+
+**Files Modified:**
+
+| File | Changes |
+|------|---------|
+| `src/sessions/WorkerPoolManager.ts` | Added `getWorkerAge()` method |
+| `src/sessions/SessionManager.ts` | Added hasWorker check + stale worker cleanup in `startSession()` and `recoverSession()` |
+
+**Implementation:**
+```typescript
+// After DB status check
+if (this.workerPool.hasWorker(sessionId)) {
+    const workerStatus = this.workerPool.getWorkerStatus(sessionId);
+    const workerAge = this.workerPool.getWorkerAge(sessionId);
+
+    // Worker stuck in initializing for more than 10s = orphan
+    const isStaleWorker = workerStatus === 'initializing' && workerAge > 10_000;
+
+    if (isStaleWorker) {
+        logger().warn(`[SessionManager] Found stale worker (age: ${workerAge}ms), cleaning up`);
+        await this.workerPool.terminateWorker(sessionId);
+        // Continue to spawn new worker
+    } else {
+        throw new Error('Session start already in progress, please wait');
+    }
+}
+```
+
+**Behavior:**
+
+| Scenario | Behavior |
+|----------|----------|
+| Worker in `initializing` < 10s | "Session start already in progress, please wait" |
+| Worker in `initializing` > 10s | Auto-cleanup + spawn new worker |
+| Worker in `running/ready/paused` | "Session start already in progress, please wait" |
+| DB status = `running` | Return existing session (idempotent) |
+
+---
+
+### Worker Initialization Deadlock Fix (2026-01-18)
+
+**Issue: spawnWorker() waits for INIT_COMPLETE but INIT is sent after spawnWorker returns**
+
+This was a **DEADLOCK**:
+1. `spawnWorker()` creates worker and waits for `INIT_COMPLETE` (30s timeout)
+2. Worker only sends `INIT_COMPLETE` after receiving `INIT` command
+3. `INIT` command is sent in `startSession()` **AFTER** `spawnWorker()` returns
+4. Result: spawnWorker never returns, times out after 30 seconds
+
+```
+DEADLOCK:
+spawnWorker() → waits for INIT_COMPLETE (30s timeout)
+                         ↑
+                         └─── Never arrives because INIT not sent yet!
+
+INIT is only sent AFTER spawnWorker() returns ← never happens
+```
+
+**Solution:**
+
+1. `spawnWorker()` now returns immediately after creating the worker (doesn't wait for `INIT_COMPLETE`)
+2. Added new method `waitForInit(sessionId)` that waits for `INIT_COMPLETE`
+3. `startSession()` and `recoverSession()` call `waitForInit()` after sending `INIT` command
+
+**Files Modified:**
+
+| File | Changes |
+|------|---------|
+| `src/sessions/WorkerPoolManager.ts` | Removed INIT_COMPLETE wait from `spawnWorker()`, added `waitForInit()` method |
+| `src/sessions/SessionManager.ts` | Added `waitForInit()` call after INIT command in `startSession()` and `recoverSession()` |
+
+**Correct Flow After Fix:**
+```
+startSession()
+    ├── spawnWorker()        → creates worker, returns immediately
+    ├── sendCommand('INIT')  → sends INIT to worker
+    ├── waitForInit()        → waits for INIT_COMPLETE (30s timeout)
+    └── sendCommand('START') → starts simulation
+```
+
+---
+
 * If you are a IA or is a IA Claude Model by Anthropic, update this file always that you make a edit and get new informations about the project, change the architeture, logic and rules of the simulator. Read and do the command on file TIMELINE.md. Also, update the data change below:
 
-*Last updated: 2026-01-18 15:30:00*
+*Last updated: 2026-01-18 17:30:00*
 
 ---

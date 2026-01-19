@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient, UseQueryOptions } from '@tanstack/react-query';
+import axios from 'axios';
 import http from '@/src/utils/http';
 import type {
   Session,
@@ -7,6 +8,7 @@ import type {
   SessionControlPayload,
   SessionLimits,
 } from '@/src/types/session';
+import { decode } from 'next-auth/jwt';
 
 // ─────────────────────────────────────────────────────────────
 // Query Keys
@@ -157,7 +159,15 @@ export function useCreateSession() {
 
   return useMutation({
     mutationFn: async (payload: CreateSessionPayload) => {
-      const res = await http.post<ApiSingleSessionResponse>('/sessions', payload);
+      // Transform camelCase to snake_case for backend
+      const apiPayload = {
+        name: payload.name,
+        config_id: payload.configId,
+        duration_days: payload.durationDays,
+        speed_factor: payload.speedFactor,
+        expires_at: payload.expiresAt,
+      };
+      const res = await http.post<ApiSingleSessionResponse>('/sessions', apiPayload);
       return mapApiSession(res.data.data);
     },
     onSuccess: () => {
@@ -210,7 +220,8 @@ export function useSessionControl() {
       action: SessionControlPayload['action'];
     }) => {
       // Use separate endpoints per action (backend requirement)
-      const res = await http.post<ApiSingleSessionResponse>(`/sessions/${sessionId}/${action}`);
+      // Pass empty object to avoid issues with Content-Type: application/json and no body
+      const res = await http.post<ApiSingleSessionResponse>(`/sessions/${sessionId}/${action}`, {});
       return mapApiSession(res.data.data);
     },
     onSuccess: (updatedSession) => {
@@ -219,6 +230,11 @@ export function useSessionControl() {
     },
     onError: (error) => {
       console.error('[useSessionControl] Error:', error);
+      // Log detailed error information from backend
+      if (axios.isAxiosError(error) && error.response) {
+        console.error('[useSessionControl] Response status:', error.response.status);
+        console.error('[useSessionControl] Response data:', error.response.data);
+      }
     },
   });
 }
@@ -227,12 +243,16 @@ export function useSessionControl() {
  * Recover an interrupted session
  * POST /api/sessions/:id/recover
  */
+
+// Recebe userId como parâmetro (obtenha via useSession no client)
 export function useRecoverSession() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (sessionId: string) => {
-      const res = await http.post<ApiSingleSessionResponse>(`/sessions/${sessionId}/recover`);
+    mutationFn: async ({ sessionId, userId }: { sessionId: string; userId: string }) => {
+      const res = await http.post<ApiSingleSessionResponse>(`/sessions/${sessionId}/recover`, {
+        user: { id: userId }
+      });
       return mapApiSession(res.data.data);
     },
     onSuccess: (updatedSession) => {
@@ -241,6 +261,9 @@ export function useRecoverSession() {
     },
     onError: (error) => {
       console.error('[useRecoverSession] Error:', error);
+      if (axios.isAxiosError(error) && error.response) {
+        console.error('[useRecoverSession] Response data:', error.response.data);
+      }
     },
   });
 }
@@ -254,7 +277,7 @@ export function useDiscardSession() {
 
   return useMutation({
     mutationFn: async (sessionId: string) => {
-      const res = await http.post<ApiSingleSessionResponse>(`/sessions/${sessionId}/discard`);
+      const res = await http.post<ApiSingleSessionResponse>(`/sessions/${sessionId}/discard`, {});
       return mapApiSession(res.data.data);
     },
     onSuccess: (updatedSession) => {
@@ -263,6 +286,9 @@ export function useDiscardSession() {
     },
     onError: (error) => {
       console.error('[useDiscardSession] Error:', error);
+      if (axios.isAxiosError(error) && error.response) {
+        console.error('[useDiscardSession] Response data:', error.response.data);
+      }
     },
   });
 }

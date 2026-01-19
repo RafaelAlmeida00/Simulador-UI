@@ -9,7 +9,7 @@ import { Skeleton } from '@/src/components/ui/skeleton';
 import { StatsCard } from '@/src/components/data-display';
 import { BufferCard, ConnectionStatus, DetailsDrawer } from '@/src/components/domain';
 import { EmptyState } from '@/src/components/feedback';
-import { getSocket, reconnectSocket } from '@/src/utils/socket';
+import { reconnectSocket } from '@/src/utils/socket';
 import { useSimulatorSelector } from '@/src/hooks/useSimulatorStore';
 import type { IBuffer, ICar } from '@/src/types/socket';
 
@@ -25,7 +25,6 @@ export default function BuffersPage() {
 
   React.useEffect(() => {
     setMounted(true);
-    getSocket();
   }, []);
 
   const handleBufferClick = React.useCallback((buffer: IBuffer) => {

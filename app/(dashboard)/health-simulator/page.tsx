@@ -109,7 +109,11 @@ export default function HealthSimulatorPage() {
     try {
       setLoading(true);
       setError(null);
-      const res = await http.get('/health/detailed');
+      const params: Record<string, string> = {};
+      if (currentSessionId) {
+        params.session_id = currentSessionId;
+      }
+      const res = await http.get('/health/detailed', { params });
       setData(res.data);
       setLastUpdate(new Date());
     } catch {
@@ -117,7 +121,7 @@ export default function HealthSimulatorPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentSessionId]);
 
   React.useEffect(() => {
     fetchHealth();

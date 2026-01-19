@@ -3,10 +3,14 @@
 // Simulator Store (Zustand + WebSocket)
 export * from './useSimulatorStore';
 
-// React Query Hooks (REST API)
+// Session ID Utility
+export * from './useSessionId';
+
+// React Query Hooks (REST API - all session-scoped)
 export * from './useEventsQuery';
 export * from './useStopsQuery';
 export * from './useOEEQuery';
+export * from './useMTTRMTBFQuery';
 export * from './useSessionsQuery';
 export * from './useConfigsQuery';
 

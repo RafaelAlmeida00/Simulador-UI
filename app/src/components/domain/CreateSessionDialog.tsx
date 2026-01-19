@@ -118,11 +118,15 @@ export function CreateSessionDialog({ limits, onSuccess }: CreateSessionDialogPr
       // Use selected config, or default config, or undefined
       const selectedConfigId = configId || defaultConfig?.id || undefined;
 
+      // Calculate expiration timestamp from duration
+      const expiresAt = Date.now() + durationDays * 24 * 60 * 60 * 1000;
+
       await createSession.mutateAsync({
         name: name.trim() || undefined,
         configId: selectedConfigId,
         durationDays,
         speedFactor,
+        expiresAt,
       });
 
       setModalState('success');

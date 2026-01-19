@@ -25,7 +25,6 @@ import { DetailsDrawer } from '@/src/components/domain';
 import { useSimulatorSelector } from '@/src/hooks/useSimulatorStore';
 import { useOEEByDate, useOEEHistorical, OEERecord } from '@/src/hooks/useOEEQuery';
 import { useStopsByDate } from '@/src/hooks/useStopsQuery';
-import { getSocket, subscribeTo } from '@/src/utils/socket';
 import { normalizePlantSnapshot } from '@/src/utils/plantNormalize';
 import { formatEpochMs } from '@/src/utils/timeFormat';
 import { ymdFromEpochMs } from '@/src/utils/date';
@@ -261,11 +260,6 @@ export default function OEEPage() {
     () => (typeof simNowMs === 'number' ? todayStr(simNowMs) : ''),
     [simNowMs]
   );
-
-  React.useEffect(() => {
-    getSocket();
-    subscribeTo('oee');
-  }, []);
 
   const [filterDate, setFilterDate] = React.useState('');
   const [filterShop, setFilterShop] = React.useState('');

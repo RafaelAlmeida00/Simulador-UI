@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Factory, Users, AlertTriangle, Gauge, HelpCircle } from 'lucide-react';
-import { getSocket, reconnectSocket } from '@/src/utils/socket';
+import { reconnectSocket } from '@/src/utils/socket';
 import { Card } from '@/src/components/ui/card';
 import { Badge } from '@/src/components/ui/badge';
 import { Skeleton } from '@/src/components/ui/skeleton';
@@ -83,10 +83,6 @@ export default function HomePage() {
   const nowSimMs = mounted ? (simHealth?.data?.simulatorTimestamp ?? null) : null;
 
   const buffers = buffersState;
-
-  useEffect(() => {
-    getSocket();
-  }, []);
 
   const isLastLineOfShop = Boolean(
     currentShop && currentShop.lines && lineIndex === currentShop.lines.length - 1

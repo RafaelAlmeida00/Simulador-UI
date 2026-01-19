@@ -27,6 +27,7 @@ import {
   useRecoverSession,
   useDiscardSession,
 } from '@/src/hooks/useSessionsQuery';
+import { useSession } from 'next-auth/react';
 import { useSessionStore } from '@/src/stores/sessionStore';
 import type { Session } from '@/src/types/session';
 
@@ -124,6 +125,7 @@ export default function SessionsPage() {
   const sessionControl = useSessionControl();
   const recoverSession = useRecoverSession();
   const discardSession = useDiscardSession();
+  const { data: authSession } = useSession();
 
   // Local state
   const [selectingSession, setSelectingSession] = React.useState(false);
@@ -139,11 +141,27 @@ export default function SessionsPage() {
     async (session: Session) => {
       setSelectingSession(true);
 
+      let sessionToOpen = session;
+
+      // If session is idle, start it first
+      if (session.status === 'idle') {
+        try {
+          sessionToOpen = await sessionControl.mutateAsync({
+            sessionId: session.id,
+            action: 'start',
+          });
+        } catch (error) {
+          console.error('[Sessions] Failed to start session:', error);
+          setSelectingSession(false);
+          return; // Don't navigate if start fails
+        }
+      }
+
       // Store the session in Zustand + cookie
-      setSession(session.id, {
-        name: session.name,
-        status: session.status,
-        createdAt: session.createdAt,
+      setSession(sessionToOpen.id, {
+        name: sessionToOpen.name,
+        status: sessionToOpen.status,
+        createdAt: sessionToOpen.createdAt,
       });
 
       // Small delay to ensure localStorage + cookie are set
@@ -152,7 +170,7 @@ export default function SessionsPage() {
       // Navigate to dashboard
       router.push('/');
     },
-    [setSession, router]
+    [setSession, router, sessionControl]
   );
 
   // Handle session control actions
@@ -198,7 +216,9 @@ export default function SessionsPage() {
   const handleRecover = React.useCallback(
     async (session: Session) => {
       try {
-        const recoveredSession = await recoverSession.mutateAsync(session.id);
+        const userId = authSession?.user?.id;
+        if (!userId) throw new Error('Usuário não autenticado');
+        const recoveredSession = await recoverSession.mutateAsync({ sessionId: session.id, userId });
 
         // Open the recovered session
         setSelectingSession(true);
@@ -213,7 +233,7 @@ export default function SessionsPage() {
         console.error('[Sessions] Recover error:', error);
       }
     },
-    [recoverSession, setSession, router]
+    [recoverSession, setSession, router, authSession]
   );
 
   // Handle session discard

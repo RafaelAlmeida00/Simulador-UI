@@ -55,6 +55,7 @@ export interface CreateSessionPayload {
   configId?: string;
   durationDays: number;
   speedFactor?: number;
+  expiresAt?: number;  // Epoch ms timestamp calculated from durationDays
 }
 
 /**

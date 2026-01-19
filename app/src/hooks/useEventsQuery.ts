@@ -2,6 +2,7 @@ import { useQuery, useInfiniteQuery, UseQueryOptions } from '@tanstack/react-que
 import http from '@/src/utils/http';
 import { asArrayFromPayload } from '@/src/utils/safe';
 import type { PaginationInfo } from '@/src/components/data-display/DataTable';
+import { useSessionId } from './useSessionId';
 
 /**
  * Event data type from the API
@@ -49,21 +50,23 @@ export interface EventFilters {
 }
 
 /**
- * Query keys factory for events
- * Using factory pattern for consistent cache key management
+ * Query keys factory for events (session-scoped)
  */
 export const eventKeys = {
-  all: ['events'] as const,
-  lists: () => [...eventKeys.all, 'list'] as const,
-  list: (filters: EventFilters) => [...eventKeys.lists(), filters] as const,
-  paginated: (filters: EventFilters, page: number) =>
-    [...eventKeys.list(filters), 'page', page] as const,
-  infinite: (filters: EventFilters) => [...eventKeys.list(filters), 'infinite'] as const,
-  detail: (id: number) => [...eventKeys.all, 'detail', id] as const,
+  all: (sessionId: string | null) => ['events', sessionId] as const,
+  lists: (sessionId: string | null) => [...eventKeys.all(sessionId), 'list'] as const,
+  list: (sessionId: string | null, filters: EventFilters) =>
+    [...eventKeys.lists(sessionId), filters] as const,
+  paginated: (sessionId: string | null, filters: EventFilters, page: number) =>
+    [...eventKeys.list(sessionId, filters), 'page', page] as const,
+  infinite: (sessionId: string | null, filters: EventFilters) =>
+    [...eventKeys.list(sessionId, filters), 'infinite'] as const,
+  detail: (sessionId: string | null, id: number) =>
+    [...eventKeys.all(sessionId), 'detail', id] as const,
 };
 
 /**
- * Hook for fetching events with pagination
+ * Hook for fetching events with pagination (session-scoped)
  * Optimized for performance with proper cache management
  */
 export function useEvents(
@@ -72,10 +75,15 @@ export function useEvents(
   limit: number = 50,
   options?: Omit<UseQueryOptions<EventRecord[], Error>, 'queryKey' | 'queryFn'>
 ) {
+  const sessionId = useSessionId();
+
   return useQuery({
-    queryKey: eventKeys.paginated(filters, page),
+    queryKey: eventKeys.paginated(sessionId, filters, page),
     queryFn: async () => {
+      if (!sessionId) return [];
+
       const params: Record<string, string | number> = {
+        session_id: sessionId,
         page,
         limit,
       };
@@ -101,23 +109,29 @@ export function useEvents(
 
       return response.data.data || [];
     },
+    enabled: !!sessionId && (options?.enabled !== false),
     staleTime: 30 * 1000, // 30 seconds
     ...options,
   });
 }
 
 /**
- * Hook for fetching all events (legacy support)
+ * Hook for fetching all events (session-scoped, legacy support)
  * Uses the paginated endpoint but fetches all at once
  */
 export function useAllEvents(
   filters: EventFilters = {},
   options?: Omit<UseQueryOptions<EventRecord[], Error>, 'queryKey' | 'queryFn'>
 ) {
+  const sessionId = useSessionId();
+
   return useQuery({
-    queryKey: eventKeys.list(filters),
+    queryKey: eventKeys.list(sessionId, filters),
     queryFn: async () => {
+      if (!sessionId) return [];
+
       const params: Record<string, string | number> = {
+        session_id: sessionId,
         limit: 1000, // Large limit for all records
       };
 
@@ -132,20 +146,32 @@ export function useAllEvents(
       const response = await http.get('/events', { params });
       return asArrayFromPayload<EventRecord>(response.data);
     },
+    enabled: !!sessionId && (options?.enabled !== false),
     staleTime: 30 * 1000,
     ...options,
   });
 }
 
 /**
- * Hook for infinite scrolling events list
+ * Hook for infinite scrolling events list (session-scoped)
  * Optimal for virtual lists with load-more functionality
  */
 export function useInfiniteEvents(filters: EventFilters = {}, limit: number = 50) {
+  const sessionId = useSessionId();
+
   return useInfiniteQuery({
-    queryKey: eventKeys.infinite(filters),
+    queryKey: eventKeys.infinite(sessionId, filters),
     queryFn: async ({ pageParam = 1 }) => {
+      if (!sessionId) {
+        return {
+          data: [] as EventRecord[],
+          nextPage: undefined,
+          hasMore: false,
+        };
+      }
+
       const params: Record<string, string | number> = {
+        session_id: sessionId,
         page: pageParam,
         limit,
       };
@@ -179,11 +205,12 @@ export function useInfiniteEvents(filters: EventFilters = {}, limit: number = 50
     },
     getNextPageParam: (lastPage) => lastPage.nextPage,
     initialPageParam: 1,
+    enabled: !!sessionId,
   });
 }
 
 /**
- * Hook for fetching events with server-side pagination
+ * Hook for fetching events with server-side pagination (session-scoped)
  * Returns both data and pagination info for use with DataTable
  */
 export function usePaginatedEvents(
@@ -192,10 +219,27 @@ export function usePaginatedEvents(
   limit: number = 20,
   options?: Omit<UseQueryOptions<PaginatedEventsResult, Error>, 'queryKey' | 'queryFn'>
 ) {
+  const sessionId = useSessionId();
+
   return useQuery({
-    queryKey: eventKeys.paginated(filters, page),
+    queryKey: eventKeys.paginated(sessionId, filters, page),
     queryFn: async () => {
+      if (!sessionId) {
+        return {
+          data: [],
+          pagination: {
+            page: 1,
+            limit,
+            total: 0,
+            totalPages: 0,
+            hasNext: false,
+            hasPrevious: false,
+          },
+        };
+      }
+
       const params: Record<string, string | number> = {
+        session_id: sessionId,
         page,
         limit,
       };
@@ -230,6 +274,7 @@ export function usePaginatedEvents(
         pagination: response.data.pagination,
       };
     },
+    enabled: !!sessionId && (options?.enabled !== false),
     staleTime: 30 * 1000,
     ...options,
   });

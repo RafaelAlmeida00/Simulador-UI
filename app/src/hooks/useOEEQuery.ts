@@ -1,6 +1,7 @@
 import { useQuery, UseQueryOptions } from '@tanstack/react-query';
 import http from '@/src/utils/http';
 import { asArrayFromPayload } from '@/src/utils/safe';
+import { useSessionId } from './useSessionId';
 
 /**
  * OEE data type from the API
@@ -35,16 +36,19 @@ export interface OEEFilters {
 }
 
 /**
- * Query keys factory for OEE
+ * Query keys factory for OEE (session-scoped)
  */
 export const oeeKeys = {
-  all: ['oee'] as const,
-  lists: () => [...oeeKeys.all, 'list'] as const,
-  list: (filters: OEEFilters) => [...oeeKeys.lists(), filters] as const,
-  byDate: (date: string) => [...oeeKeys.all, 'byDate', date] as const,
-  historical: (days: number, baseDate?: string) =>
-    [...oeeKeys.all, 'historical', days, baseDate] as const,
-  detail: (id: number) => [...oeeKeys.all, 'detail', id] as const,
+  all: (sessionId: string | null) => ['oee', sessionId] as const,
+  lists: (sessionId: string | null) => [...oeeKeys.all(sessionId), 'list'] as const,
+  list: (sessionId: string | null, filters: OEEFilters) =>
+    [...oeeKeys.lists(sessionId), filters] as const,
+  byDate: (sessionId: string | null, date: string) =>
+    [...oeeKeys.all(sessionId), 'byDate', date] as const,
+  historical: (sessionId: string | null, days: number, baseDate?: string) =>
+    [...oeeKeys.all(sessionId), 'historical', days, baseDate] as const,
+  detail: (sessionId: string | null, id: number) =>
+    [...oeeKeys.all(sessionId), 'detail', id] as const,
 };
 
 /**
@@ -66,16 +70,21 @@ export function normalizeOEERecord(record: OEERecord): OEERecord & {
 }
 
 /**
- * Hook for fetching OEE data with filters
+ * Hook for fetching OEE data with filters (session-scoped)
  */
 export function useOEE(
   filters: OEEFilters = {},
   options?: Omit<UseQueryOptions<OEERecord[], Error>, 'queryKey' | 'queryFn'>
 ) {
+  const sessionId = useSessionId();
+
   return useQuery({
-    queryKey: oeeKeys.list(filters),
+    queryKey: oeeKeys.list(sessionId, filters),
     queryFn: async () => {
+      if (!sessionId) return [];
+
       const params: Record<string, string | number> = {
+        session_id: sessionId,
         limit: 1000,
       };
 
@@ -88,49 +97,59 @@ export function useOEE(
       const response = await http.get('/oee', { params });
       return asArrayFromPayload<OEERecord>(response.data);
     },
+    enabled: !!sessionId && (options?.enabled !== false),
     staleTime: 60 * 1000, // OEE data is stable, 1 minute stale time
     ...options,
   });
 }
 
 /**
- * Hook for fetching OEE data for a specific date
+ * Hook for fetching OEE data for a specific date (session-scoped)
  */
 export function useOEEByDate(
   date: string | null,
   options?: Omit<UseQueryOptions<OEERecord[], Error>, 'queryKey' | 'queryFn'>
 ) {
+  const sessionId = useSessionId();
+
   return useQuery({
-    queryKey: oeeKeys.byDate(date ?? ''),
+    queryKey: oeeKeys.byDate(sessionId, date ?? ''),
     queryFn: async () => {
-      if (!date) return [];
+      if (!sessionId || !date) return [];
 
       const response = await http.get('/oee', {
-        params: { date },
+        params: {
+          session_id: sessionId,
+          date,
+        },
       });
       return asArrayFromPayload<OEERecord>(response.data);
     },
-    enabled: Boolean(date),
+    enabled: !!sessionId && Boolean(date) && (options?.enabled !== false),
     staleTime: 60 * 1000,
     ...options,
   });
 }
 
 /**
- * Hook for fetching historical OEE data (last N days)
+ * Hook for fetching historical OEE data (session-scoped, last N days)
  */
 export function useOEEHistorical(
   days: number = 7,
   baseDate?: number, // Base date as epoch ms
   options?: Omit<UseQueryOptions<OEERecord[], Error>, 'queryKey' | 'queryFn'>
 ) {
+  const sessionId = useSessionId();
+
   const baseDateStr = baseDate
     ? new Date(baseDate).toISOString().slice(0, 10)
     : undefined;
 
   return useQuery({
-    queryKey: oeeKeys.historical(days, baseDateStr),
+    queryKey: oeeKeys.historical(sessionId, days, baseDateStr),
     queryFn: async () => {
+      if (!sessionId) return [];
+
       const now = baseDate ?? Date.now();
       const dates: string[] = [];
 
@@ -146,6 +165,7 @@ export function useOEEHistorical(
 
       const response = await http.get('/oee', {
         params: {
+          session_id: sessionId,
           start_time: startDate,
           end_time: endDate,
           limit: 1000,
@@ -154,6 +174,7 @@ export function useOEEHistorical(
 
       return asArrayFromPayload<OEERecord>(response.data);
     },
+    enabled: !!sessionId && (options?.enabled !== false),
     staleTime: 5 * 60 * 1000, // Historical data is very stable, 5 min stale time
     ...options,
   });
