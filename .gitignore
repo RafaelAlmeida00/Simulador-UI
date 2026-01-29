@@ -45,3 +45,9 @@ client_secret_*.json
 
 # Windows reserved names
 nul
+
+.CLAUDE.md
+
+.documentation/CLAUDE API.md
+
+.claude/

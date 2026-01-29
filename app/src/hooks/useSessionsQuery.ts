@@ -159,13 +159,13 @@ export function useCreateSession() {
 
   return useMutation({
     mutationFn: async (payload: CreateSessionPayload) => {
-      // Transform camelCase to snake_case for backend
+      // Backend expects camelCase for session creation
       const apiPayload = {
         name: payload.name,
-        config_id: payload.configId,
-        duration_days: payload.durationDays,
-        speed_factor: payload.speedFactor,
-        expires_at: payload.expiresAt,
+        configId: payload.configId,
+        durationDays: payload.durationDays,
+        speedFactor: payload.speedFactor,
+        expiresAt: payload.expiresAt,
       };
       const res = await http.post<ApiSingleSessionResponse>('/sessions', apiPayload);
       return mapApiSession(res.data.data);

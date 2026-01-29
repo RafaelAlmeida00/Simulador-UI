@@ -102,6 +102,14 @@ function isMTTRMTBFData(v: unknown): v is MTTRMTBFData {
   );
 }
 
+function mergeOEEEvent(prev: OEEDataEmit[], incoming: OEEDataEmit): OEEDataEmit[] {
+  const idx = prev.findIndex((o) => o.shop === incoming.shop && o.line === incoming.line);
+  if (idx < 0) return [...prev, incoming];
+  const next = prev.slice();
+  next[idx] = { ...prev[idx], ...incoming };
+  return next;
+}
+
 function mergeBufferEvent(prev: IBuffer[], incoming: IBuffer): IBuffer[] {
   const idx = prev.findIndex((b) => b.id === incoming.id);
   if (idx < 0) return [...prev, incoming];
@@ -159,7 +167,7 @@ export const simulatorStore = {
   },
 
   setPlantState(payload: PlantStatePayload) {
-    state = { ...state, plantState: payload };
+    state = { ...state, plantState: payload };    
     emitChange();
   },
 
@@ -168,14 +176,20 @@ export const simulatorStore = {
     const data: unknown = payload?.data;
 
     if (Array.isArray(data)) {
+      // OEE_STATE: full state replacement
       oeeState = data.filter(isOEEData);
+    } else if (isRecord(data) && 'oee' in data) {
+      // OEE_EVENT: incremental update
+      const o = (data as { oee?: unknown }).oee;
+      if (isOEEData(o)) {
+        oeeState = mergeOEEEvent(oeeState, o);
+      }
     } else if (isOEEData(data)) {
-      oeeState = [data];
+      // Single OEE data: merge into state
+      oeeState = mergeOEEEvent(oeeState, data);
     }
 
-    state = { ...state, oee: payload, oeeState };    
-    console.log(state);
-    
+    state = { ...state, oee: payload, oeeState };
     emitChange();
   },
 

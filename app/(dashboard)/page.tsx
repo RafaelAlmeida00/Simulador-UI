@@ -62,7 +62,7 @@ export default function HomePage() {
   const stopsState = useSimulatorSelector((s) => s.stopsState);
   const oeeState = useSimulatorSelector((s) => s.oeeState);
   const plantState = useSimulatorSelector((s) => s.plantState);
-
+  
   // Normalize plantState locally to ensure re-render when plantState changes
   const shops = React.useMemo(() => {
     if (!plantState) return [];

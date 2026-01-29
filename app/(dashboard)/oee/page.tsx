@@ -231,7 +231,7 @@ export default function OEEPage() {
   const oeeState = useSimulatorSelector((s) => s.oeeState);
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
-
+  
   const STOPS_UTC_OFFSET_MS = 3 * 3600000;
   const healthSimMs = useSimulatorSelector((s) => s.health?.data?.simulatorTimestamp);
   // Use ref to capture initial Date.now() only once, avoiding impure function during render

@@ -31,7 +31,7 @@ import { GlobalSearch } from '@/src/components/domain';
 // Page titles mapping
 const pageTitles: Record<string, string> = {
   '/': 'Dashboard',
-  '/oee': 'OEE - Overall Equipment Effectiveness',
+  '/oee': 'OEE',
   '/mttr-mtbf': 'MTTR / MTBF',
   '/stoppages': 'Paradas',
   '/events': 'Eventos',

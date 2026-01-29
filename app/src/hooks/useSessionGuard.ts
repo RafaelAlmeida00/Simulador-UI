@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
+import http from '@/src/utils/http';
 import {
   useSessionStore,
   selectCurrentSessionId,
@@ -31,7 +32,8 @@ interface UseSessionGuardResult {
 
 /**
  * Hook to validate session state before rendering the dashboard.
- * Redirects to /sessions if session is missing, expired, or interrupted.
+ * Performs both local and server-side validation.
+ * Redirects to /sessions if session is missing, deleted, expired, or interrupted.
  *
  * Call this at the top of dashboard layout BEFORE useSessionSocket.
  */
@@ -44,10 +46,13 @@ export function useSessionGuard(): UseSessionGuardResult {
   const isSessionValid = useSessionStore(selectIsSessionValid);
   const needsRecovery = useSessionStore(selectNeedsRecovery);
   const clearSession = useSessionStore((s) => s.clearSession);
+  const updateSessionStatus = useSessionStore((s) => s.updateSessionStatus);
 
   const [validating, setValidating] = React.useState(true);
   const [redirectReason, setRedirectReason] = React.useState<string | null>(null);
+  const [serverValidated, setServerValidated] = React.useState(false);
 
+  // Local validation effect
   React.useEffect(() => {
     // Wait for store to hydrate from localStorage
     if (!isHydrated) {
@@ -61,7 +66,7 @@ export function useSessionGuard(): UseSessionGuardResult {
       return;
     }
 
-    // Session needs recovery (interrupted)
+    // Session needs recovery (interrupted) - based on local state
     if (needsRecovery) {
       setRedirectReason('Sessao interrompida - recuperacao necessaria');
       clearSession();
@@ -69,7 +74,7 @@ export function useSessionGuard(): UseSessionGuardResult {
       return;
     }
 
-    // Session is in an invalid state (expired, stopped)
+    // Session is in an invalid state (expired, stopped) - based on local state
     if (!isSessionValid) {
       const status = sessionMetadata?.status;
       const reasons: Record<SessionStatus, string> = {
@@ -86,9 +91,7 @@ export function useSessionGuard(): UseSessionGuardResult {
       return;
     }
 
-    // Session is valid
-    setValidating(false);
-    setRedirectReason(null);
+    // Local validation passed, but wait for server validation
   }, [
     isHydrated,
     currentSessionId,
@@ -96,6 +99,104 @@ export function useSessionGuard(): UseSessionGuardResult {
     needsRecovery,
     sessionMetadata?.status,
     clearSession,
+    router,
+  ]);
+
+  // Server-side validation effect
+  React.useEffect(() => {
+    // Skip if not hydrated or no session or already server validated
+    if (!isHydrated || !currentSessionId || !isSessionValid || serverValidated) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function validateSessionOnServer() {
+      try {
+        const res = await http.get<{
+          success: boolean;
+          data: {
+            id: string;
+            status: SessionStatus;
+          };
+        }>(`/sessions/${currentSessionId}`);
+
+        if (cancelled) return;
+
+        const serverSession = res.data.data;
+        const serverStatus = serverSession.status;
+
+        // Check for invalid statuses from server
+        if (serverStatus === 'interrupted') {
+          setRedirectReason('Sessao interrompida - servidor reiniciado');
+          clearSession();
+          router.replace('/sessions');
+          return;
+        }
+
+        if (serverStatus === 'stopped') {
+          setRedirectReason('Sessao encerrada');
+          clearSession();
+          router.replace('/sessions');
+          return;
+        }
+
+        if (serverStatus === 'expired') {
+          setRedirectReason('Sessao expirada');
+          clearSession();
+          router.replace('/sessions');
+          return;
+        }
+
+        // Update local status if different from server
+        if (sessionMetadata?.status !== serverStatus) {
+          updateSessionStatus(serverStatus);
+        }
+
+        // Server validation passed
+        setServerValidated(true);
+        setValidating(false);
+        setRedirectReason(null);
+      } catch (error: unknown) {
+        if (cancelled) return;
+
+        // Session not found (deleted from database)
+        const axiosError = error as { response?: { status?: number } };
+        if (axiosError.response?.status === 404) {
+          setRedirectReason('Sessao nao encontrada - pode ter sido excluida');
+          clearSession();
+          router.replace('/sessions');
+          return;
+        }
+
+        // Session forbidden (not owner)
+        if (axiosError.response?.status === 403) {
+          setRedirectReason('Acesso negado a esta sessao');
+          clearSession();
+          router.replace('/sessions');
+          return;
+        }
+
+        // Other errors - log but allow access (optimistic)
+        console.error('[SessionGuard] Server validation error:', error);
+        setServerValidated(true);
+        setValidating(false);
+      }
+    }
+
+    validateSessionOnServer();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isHydrated,
+    currentSessionId,
+    isSessionValid,
+    serverValidated,
+    sessionMetadata?.status,
+    clearSession,
+    updateSessionStatus,
     router,
   ]);
 
@@ -123,7 +224,7 @@ export function useSessionGuard(): UseSessionGuardResult {
 
   return {
     validating,
-    sessionValid: !validating && isSessionValid,
+    sessionValid: !validating && isSessionValid && serverValidated,
     redirectReason,
   };
 }
